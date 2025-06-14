@@ -1,0 +1,67 @@
+using System;
+using System.Collections.Generic;
+using System.Management;
+
+namespace DisplayModeSwitcher
+{
+    public class ProfileManager : IDisposable
+    {
+        private readonly Dictionary<string, DisplayMode> _profiles;
+        private readonly Dictionary<int, DisplayMode> _active = new();
+        private readonly ManagementEventWatcher _startWatcher;
+        private readonly ManagementEventWatcher _stopWatcher;
+
+        public ProfileManager(Dictionary<string, DisplayMode> profiles)
+        {
+            _profiles = profiles;
+
+            _startWatcher = new ManagementEventWatcher(
+                new WqlEventQuery("SELECT * FROM Win32_ProcessStartTrace"));
+            _startWatcher.EventArrived += OnProcessStarted;
+
+            _stopWatcher = new ManagementEventWatcher(
+                new WqlEventQuery("SELECT * FROM Win32_ProcessStopTrace"));
+            _stopWatcher.EventArrived += OnProcessStopped;
+        }
+
+        public void Start()
+        {
+            _startWatcher.Start();
+            _stopWatcher.Start();
+        }
+
+        private void OnProcessStarted(object sender, EventArrivedEventArgs e)
+        {
+            string processName = (string)e.NewEvent.Properties["ProcessName"].Value;
+            int pid = Convert.ToInt32(e.NewEvent.Properties["ProcessID"].Value);
+
+            if (_profiles.TryGetValue(processName, out var mode))
+            {
+                var current = DisplayManager.GetCurrentDisplayMode();
+                if (current != null)
+                {
+                    _active[pid] = current;
+                }
+                DisplayManager.SetDisplayMode(mode.Width, mode.Height, mode.Frequency);
+            }
+        }
+
+        private void OnProcessStopped(object sender, EventArrivedEventArgs e)
+        {
+            int pid = Convert.ToInt32(e.NewEvent.Properties["ProcessID"].Value);
+            if (_active.TryGetValue(pid, out var mode))
+            {
+                DisplayManager.SetDisplayMode(mode.Width, mode.Height, mode.Frequency);
+                _active.Remove(pid);
+            }
+        }
+
+        public void Dispose()
+        {
+            _startWatcher.Stop();
+            _stopWatcher.Stop();
+            _startWatcher.Dispose();
+            _stopWatcher.Dispose();
+        }
+    }
+}

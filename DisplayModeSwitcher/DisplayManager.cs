@@ -65,6 +65,22 @@ namespace DisplayModeSwitcher
         private const int DM_DISPLAYFREQUENCY = 0x00400000;
         private const int DM_BITSPERPEL = 0x00040000;
 
+        public static DisplayMode? GetCurrentDisplayMode()
+        {
+            DEVMODE dm = new DEVMODE();
+            dm.dmSize = (short)Marshal.SizeOf(typeof(DEVMODE));
+            if (!EnumDisplaySettings(null, ENUM_CURRENT_SETTINGS, ref dm))
+                return null;
+
+            return new DisplayMode
+            {
+                Width = (uint)dm.dmPelsWidth,
+                Height = (uint)dm.dmPelsHeight,
+                Frequency = (uint)dm.dmDisplayFrequency,
+                Label = $"{dm.dmPelsWidth}x{dm.dmPelsHeight} @ {dm.dmDisplayFrequency}Hz"
+            };
+        }
+
         [DllImport("user32.dll", CharSet = CharSet.Ansi)]
         private static extern bool EnumDisplaySettings(string lpszDeviceName, int iModeNum, ref DEVMODE lpDevMode);
 
