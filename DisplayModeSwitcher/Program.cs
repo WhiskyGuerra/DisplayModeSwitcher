@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Windows.Forms;
 
 namespace DisplayModeSwitcher
@@ -9,17 +10,15 @@ namespace DisplayModeSwitcher
         [STAThread]
         static void Main()
         {
-            var profiles = new Dictionary<string, DisplayMode>
-            {
-                { "notepad.exe", new DisplayMode { Width = 1920, Height = 1080, Frequency = 100 } }
-            };
+            string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "profiles.json");
+            var store = new ProfileStore(path);
 
-            using var manager = new ProfileManager(profiles);
+            using var manager = new ProfileManager(store.Profiles);
             manager.Start();
 
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
-            Application.Run(new TrayForm());
+            Application.Run(new TrayForm(store));
         }
     }
 }

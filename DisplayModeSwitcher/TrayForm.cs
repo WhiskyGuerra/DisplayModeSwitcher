@@ -6,14 +6,23 @@ namespace DisplayModeSwitcher
 {
     public class TrayForm : Form
     {
+        private readonly ProfileStore _store;
         private NotifyIcon trayIcon;
         private ContextMenuStrip contextMenu;
-
-        public TrayForm()
+        public TrayForm(ProfileStore store)
         {
+            _store = store;
             contextMenu = new ContextMenuStrip();
 
             AddGroupedResolutions();
+
+            var manageItem = new ToolStripMenuItem("Profile verwalten...");
+            manageItem.Click += (s, e) =>
+            {
+                using var form = new ProfileManagerForm(_store);
+                form.ShowDialog();
+            };
+            contextMenu.Items.Add(manageItem);
 
             contextMenu.Items.Add(new ToolStripSeparator());
 
