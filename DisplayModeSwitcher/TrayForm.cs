@@ -16,6 +16,17 @@ namespace DisplayModeSwitcher
 
             AddGroupedResolutions();
 
+            var autostartItem = new ToolStripMenuItem("Autostart") { CheckOnClick = true };
+            autostartItem.Checked = AutostartManager.IsEnabled();
+            autostartItem.CheckedChanged += (s, e) =>
+            {
+                if (autostartItem.Checked)
+                    AutostartManager.Enable();
+                else
+                    AutostartManager.Disable();
+            };
+            contextMenu.Items.Add(autostartItem);
+
             var manageItem = new ToolStripMenuItem("Profile verwalten...");
             manageItem.Click += (s, e) =>
             {
