@@ -8,6 +8,14 @@ namespace DisplayModeSwitcher
         [STAThread]
         static void Main()
         {
+            var profiles = new Dictionary<string, DisplayMode>
+            {
+                { "notepad.exe", new DisplayMode { Width = 1920, Height = 1080, Frequency = 100 } }
+            };
+
+            using var manager = new ProfileManager(profiles);
+            manager.Start();
+
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
             Application.Run(new TrayForm());

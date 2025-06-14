@@ -116,5 +116,32 @@ namespace DisplayModeSwitcher
 
             return true;
         }
+
+        public static List<DisplayMode> GetAvailableDisplayModes()
+        {
+            List<DisplayMode> modes = new List<DisplayMode>();
+            DEVMODE dm = new DEVMODE();
+            dm.dmSize = (short)Marshal.SizeOf(typeof(DEVMODE));
+
+            int i = 0;
+            while (EnumDisplaySettings(null, i++, ref dm))
+            {
+                var mode = new DisplayMode
+                {
+                    Width = (uint)dm.dmPelsWidth,
+                    Height = (uint)dm.dmPelsHeight,
+                    Frequency = (uint)dm.dmDisplayFrequency,
+                    Label = $"{dm.dmPelsWidth}x{dm.dmPelsHeight} @ {dm.dmDisplayFrequency}Hz"
+                };
+
+                if (!modes.Contains(mode))
+                    modes.Add(mode);
+            }
+
+            return modes.OrderByDescending(m => m.Width)
+                        .ThenByDescending(m => m.Height)
+                        .ThenByDescending(m => m.Frequency)
+                        .ToList();
+        }
     }
 }
