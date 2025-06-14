@@ -22,6 +22,14 @@ namespace DisplayModeSwitcher
             public override string ToString() => $"{Process} → {Mode.Width}x{Mode.Height}@{Mode.Frequency}Hz";
         }
 
+        private class ProcessItem
+        {
+            public string Name { get; set; } = string.Empty;
+            public int Id { get; set; }
+            public string Path { get; set; } = string.Empty;
+            public override string ToString() => $"{Name} ({Id}) - {Path}";
+        }
+
         public ProfileManagerForm(ProfileStore store)
         {
             _store = store;
@@ -58,32 +66,37 @@ namespace DisplayModeSwitcher
             _processBox.Items.Clear();
             Task.Run(() =>
             {
+                int currentSession = Process.GetCurrentProcess().SessionId;
                 var list = Process.GetProcesses()
-                    .Where(p =>
+                    .Select(p =>
                     {
                         try
                         {
-                            if (p.MainWindowHandle == IntPtr.Zero)
-                                return false;
-                            string path = p.MainModule.FileName;
-                            if (path.Contains("System32", StringComparison.OrdinalIgnoreCase))
-                                return false;
-                            return true;
+                            string path = p.MainModule!.FileName;
+                            return new { Proc = p, Path = path };
                         }
                         catch
                         {
-                            return false;
+                            return null;
                         }
                     })
-                    .Select(p => p.ProcessName + ".exe")
-                    .Distinct()
-                    .OrderBy(n => n)
+                    .Where(x => x != null &&
+                                x.Proc.SessionId == currentSession &&
+                                !string.IsNullOrEmpty(x.Path) &&
+                                !x.Path.Contains("System32", StringComparison.OrdinalIgnoreCase))
+                    .Select(x => new ProcessItem
+                    {
+                        Name = x.Proc.ProcessName + ".exe",
+                        Id = x.Proc.Id,
+                        Path = x.Path!
+                    })
+                    .OrderBy(p => p.Name)
                     .ToList();
 
                 BeginInvoke(new Action(() =>
                 {
-                    foreach (var name in list)
-                        _processBox.Items.Add(name);
+                    foreach (var item in list)
+                        _processBox.Items.Add(item);
                     if (_processBox.Items.Count > 0)
                         _processBox.SelectedIndex = 0;
                 }));
@@ -113,7 +126,7 @@ namespace DisplayModeSwitcher
         {
             if (_processBox.SelectedItem == null || _modeBox.SelectedItem == null)
                 return;
-            string process = _processBox.SelectedItem.ToString()!;
+            string process = (_processBox.SelectedItem as ProcessItem)?.Name ?? _processBox.SelectedItem.ToString()!;
             var mode = (DisplayMode)_modeBox.SelectedItem;
             _store.Profiles[process] = mode;
             _store.Save();
