@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Threading;
 
 namespace DisplayModeSwitcher
@@ -10,6 +11,7 @@ namespace DisplayModeSwitcher
     {
         private readonly ConcurrentDictionary<string, DisplayMode> _profiles;
         private string? _currentProcess;
+        private Process? _processInstance;
         private DisplayMode? _originalMode;
         private readonly Thread _thread;
         private bool _running;
@@ -37,13 +39,21 @@ namespace DisplayModeSwitcher
                         foreach (var kvp in _profiles)
                         {
                             string name = Path.GetFileNameWithoutExtension(kvp.Key);
-                            if (Process.GetProcessesByName(name).Length > 0)
+                            Process? proc = null;
+                            try
+                            {
+                                proc = Process.GetProcessesByName(name).FirstOrDefault();
+                            }
+                            catch { }
+
+                            if (proc != null)
                             {
                                 var current = DisplayManager.GetCurrentDisplayMode();
                                 if (current != null)
                                 {
                                     _originalMode = current;
                                     _currentProcess = kvp.Key;
+                                    _processInstance = proc;
                                     DisplayManager.SetDisplayMode(kvp.Value.Width, kvp.Value.Height, kvp.Value.Frequency);
                                 }
                                 break;
@@ -52,14 +62,25 @@ namespace DisplayModeSwitcher
                     }
                     else
                     {
-                        string name = Path.GetFileNameWithoutExtension(_currentProcess);
-                        if (Process.GetProcessesByName(name).Length == 0)
+                        bool exited = false;
+                        try
+                        {
+                            if (_processInstance == null || _processInstance.HasExited)
+                                exited = true;
+                        }
+                        catch
+                        {
+                            exited = true;
+                        }
+
+                        if (exited)
                         {
                             if (_originalMode != null)
                             {
                                 DisplayManager.SetDisplayMode(_originalMode.Width, _originalMode.Height, _originalMode.Frequency);
                             }
                             _currentProcess = null;
+                            _processInstance = null;
                             _originalMode = null;
                         }
                     }
