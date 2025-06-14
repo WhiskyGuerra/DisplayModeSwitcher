@@ -1,69 +1,82 @@
 using System;
 using System.Collections.Concurrent;
-using System.Collections.Generic;
-using System.Management;
+using System.Diagnostics;
+using System.IO;
+using System.Threading;
 
 namespace DisplayModeSwitcher
 {
     public class ProfileManager : IDisposable
     {
         private readonly ConcurrentDictionary<string, DisplayMode> _profiles;
-        private readonly ConcurrentDictionary<int, DisplayMode> _active = new();
-        private readonly ManagementEventWatcher _startWatcher;
-        private readonly ManagementEventWatcher _stopWatcher;
+        private string? _currentProcess;
+        private DisplayMode? _originalMode;
+        private readonly Thread _thread;
+        private bool _running;
 
         public ProfileManager(ConcurrentDictionary<string, DisplayMode> profiles)
         {
             _profiles = profiles;
-
-            _startWatcher = new ManagementEventWatcher(
-                new WqlEventQuery("SELECT * FROM Win32_ProcessStartTrace"));
-            _startWatcher.EventArrived += OnProcessStarted;
-
-            _stopWatcher = new ManagementEventWatcher(
-                new WqlEventQuery("SELECT * FROM Win32_ProcessStopTrace"));
-            _stopWatcher.EventArrived += OnProcessStopped;
+            _thread = new Thread(Monitor) { IsBackground = true };
         }
 
         public void Start()
         {
-            _startWatcher.Start();
-            _stopWatcher.Start();
+            _running = true;
+            _thread.Start();
         }
 
-        private void OnProcessStarted(object sender, EventArrivedEventArgs e)
+        private void Monitor()
         {
-            string processName = (string)e.NewEvent.Properties["ProcessName"].Value;
-            int pid = Convert.ToInt32(e.NewEvent.Properties["ProcessID"].Value);
-
-            if (_profiles.TryGetValue(processName, out var mode))
+            while (_running)
             {
-                // Explicitly specify the method to resolve ambiguity
-                DisplayMode? current = DisplayManager.GetCurrentDisplayMode();
-                if (current != null)
+                try
                 {
-                    _active[pid] = current;
+                    if (_currentProcess == null)
+                    {
+                        foreach (var kvp in _profiles)
+                        {
+                            string name = Path.GetFileNameWithoutExtension(kvp.Key);
+                            if (Process.GetProcessesByName(name).Length > 0)
+                            {
+                                var current = DisplayManager.GetCurrentDisplayMode();
+                                if (current != null)
+                                {
+                                    _originalMode = current;
+                                    _currentProcess = kvp.Key;
+                                    DisplayManager.SetDisplayMode(kvp.Value.Width, kvp.Value.Height, kvp.Value.Frequency);
+                                }
+                                break;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        string name = Path.GetFileNameWithoutExtension(_currentProcess);
+                        if (Process.GetProcessesByName(name).Length == 0)
+                        {
+                            if (_originalMode != null)
+                            {
+                                DisplayManager.SetDisplayMode(_originalMode.Width, _originalMode.Height, _originalMode.Frequency);
+                            }
+                            _currentProcess = null;
+                            _originalMode = null;
+                        }
+                    }
                 }
-                DisplayManager.SetDisplayMode(mode.Width, mode.Height, mode.Frequency);
-            }
-        }
+                catch
+                {
+                    // ignore any polling errors
+                }
 
-        private void OnProcessStopped(object sender, EventArrivedEventArgs e)
-        {
-            int pid = Convert.ToInt32(e.NewEvent.Properties["ProcessID"].Value);
-            if (_active.TryGetValue(pid, out var mode))
-            {
-                DisplayManager.SetDisplayMode(mode.Width, mode.Height, mode.Frequency);
-                _active.TryRemove(pid, out _);
+                Thread.Sleep(1000);
             }
         }
 
         public void Dispose()
         {
-            _startWatcher.Stop();
-            _stopWatcher.Stop();
-            _startWatcher.Dispose();
-            _stopWatcher.Dispose();
+            _running = false;
+            _thread.Join();
         }
     }
 }
