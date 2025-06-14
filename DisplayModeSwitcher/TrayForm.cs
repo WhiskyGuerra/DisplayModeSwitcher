@@ -32,7 +32,7 @@ namespace DisplayModeSwitcher
 
             trayIcon = new NotifyIcon
             {
-                Icon = SystemIcons.Application,
+                Icon = new Icon(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Resources", "Icon.ico")),
                 ContextMenuStrip = contextMenu,
                 Text = "Display Mode Switcher",
                 Visible = true
