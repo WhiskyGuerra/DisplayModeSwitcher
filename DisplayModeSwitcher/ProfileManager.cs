@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Management;
 
@@ -6,12 +7,12 @@ namespace DisplayModeSwitcher
 {
     public class ProfileManager : IDisposable
     {
-        private readonly Dictionary<string, DisplayMode> _profiles;
-        private readonly Dictionary<int, DisplayMode> _active = new();
+        private readonly ConcurrentDictionary<string, DisplayMode> _profiles;
+        private readonly ConcurrentDictionary<int, DisplayMode> _active = new();
         private readonly ManagementEventWatcher _startWatcher;
         private readonly ManagementEventWatcher _stopWatcher;
 
-        public ProfileManager(Dictionary<string, DisplayMode> profiles)
+        public ProfileManager(ConcurrentDictionary<string, DisplayMode> profiles)
         {
             _profiles = profiles;
 
@@ -53,7 +54,7 @@ namespace DisplayModeSwitcher
             if (_active.TryGetValue(pid, out var mode))
             {
                 DisplayManager.SetDisplayMode(mode.Width, mode.Height, mode.Frequency);
-                _active.Remove(pid);
+                _active.TryRemove(pid, out _);
             }
         }
 
