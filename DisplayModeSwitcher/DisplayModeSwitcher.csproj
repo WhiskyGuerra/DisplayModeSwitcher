@@ -7,6 +7,14 @@
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
+	<Version>1.0.0</Version>
+	<AssemblyVersion>1.0.0.0</AssemblyVersion>
+	<FileVersion>1.0.0.0</FileVersion>
+	<Company>Dein Name oder Team</Company>
+	<Product>DisplayModeSwitcher</Product>
+	<Authors>Eure Hoheit</Authors>
+	<Description>Tool zur dynamischen Auflösungsumschaltung basierend auf aktiven Profilen.</Description>
+	<PackageProjectUrl>https://github.com/deinProjekt</PackageProjectUrl>
   </PropertyGroup>
 
   <ItemGroup>
