@@ -144,5 +144,22 @@ namespace DisplayModeSwitcher
                         .ToList();
         }
 
+        public static DisplayMode? GetCurrentDisplayMode()
+        {
+            DEVMODE dm = new DEVMODE();
+            dm.dmSize = (short)Marshal.SizeOf(typeof(DEVMODE));
+
+            if (!EnumDisplaySettings(null, ENUM_CURRENT_SETTINGS, ref dm))
+                return null;
+
+            return new DisplayMode
+            {
+                Width = (uint)dm.dmPelsWidth,
+                Height = (uint)dm.dmPelsHeight,
+                Frequency = (uint)dm.dmDisplayFrequency,
+                Label = $"{dm.dmPelsWidth}x{dm.dmPelsHeight} @ {dm.dmDisplayFrequency}Hz"
+            };
+        }
+
     }
 }
