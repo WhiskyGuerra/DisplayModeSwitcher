@@ -11,7 +11,7 @@ namespace DisplayModeSwitcher
         {
             var profiles = new Dictionary<string, DisplayMode>
             {
-                { "notepad.exe", new DisplayMode { Width = 3840, Height = 1080, Frequency = 100 } }
+                { "notepad.exe", new DisplayMode { Width = 1920, Height = 1080, Frequency = 100 } }
             };
 
             using var manager = new ProfileManager(profiles);

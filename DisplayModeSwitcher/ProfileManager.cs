@@ -37,7 +37,8 @@ namespace DisplayModeSwitcher
 
             if (_profiles.TryGetValue(processName, out var mode))
             {
-                var current = DisplayManager.GetCurrentDisplayMode();
+                // Explicitly specify the method to resolve ambiguity
+                DisplayMode? current = DisplayManager.GetCurrentDisplayMode();
                 if (current != null)
                 {
                     _active[pid] = current;
