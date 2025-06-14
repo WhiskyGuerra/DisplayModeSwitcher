@@ -13,9 +13,7 @@ namespace DisplayModeSwitcher
         {
             contextMenu = new ContextMenuStrip();
 
-            // Füge deine Auflösungsoptionen hier ein – kann auch später aus JSON geladen werden
-            AddResolutionOption("3840x1080 @ 100Hz", 3840, 1080, 100);
-            AddResolutionOption("1920x1080 @ 60Hz", 1920, 1080, 60);
+            AddGroupedResolutions();
 
             contextMenu.Items.Add(new ToolStripSeparator());
 
@@ -31,7 +29,6 @@ namespace DisplayModeSwitcher
                 Visible = true
             };
 
-            // Verstecke die Form – das ist kein normales UI-Fenster
             WindowState = FormWindowState.Minimized;
             ShowInTaskbar = false;
             FormBorderStyle = FormBorderStyle.FixedToolWindow;
@@ -56,5 +53,39 @@ namespace DisplayModeSwitcher
             trayIcon.Visible = false;
             base.OnFormClosing(e);
         }
+
+        private void AddGroupedResolutions()
+        {
+            var modes = DisplayManager.GetAvailableDisplayModes();
+
+            var grouped = modes
+                .GroupBy(m => new { m.Width, m.Height })
+                .OrderByDescending(g => g.Key.Width)
+                .ThenByDescending(g => g.Key.Height);
+
+            foreach (var group in grouped)
+            {
+                var submenu = new ToolStripMenuItem($"📐 {group.Key.Width}x{group.Key.Height}");
+
+                foreach (var mode in group.OrderByDescending(m => m.Frequency))
+                {
+                    var label = $"@ {mode.Frequency}Hz";
+                    var item = new ToolStripMenuItem(label);
+                    uint width = mode.Width, height = mode.Height, freq = mode.Frequency;
+
+                    item.Click += (s, e) =>
+                    {
+                        bool success = DisplayManager.SetDisplayMode(width, height, freq);
+                        if (!success)
+                            MessageBox.Show($"Fehler beim Umschalten auf {width}x{height} @ {freq}Hz", "Fehler", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    };
+
+                    submenu.DropDownItems.Add(item);
+                }
+
+                contextMenu.Items.Add(submenu);
+            }
+        }
+
     }
 }
