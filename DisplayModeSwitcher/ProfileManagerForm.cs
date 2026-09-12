@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -14,20 +15,16 @@ namespace DisplayModeSwitcher
         private readonly Button _removeButton;
         private readonly ListBox _profileList;
         private readonly IProcessProvider _processProvider;
+        private readonly CheckBox _showAllProcesses;
+        private int _processLoadVersion;
+        private bool _isClosing;
 
-        private class ProfileListItem
+        private sealed class ProfileListItem
         {
-            public string Process { get; set; } = string.Empty;
+            public string ProcessKey { get; set; } = string.Empty;
+            public ProcessPresentationItem Presentation { get; set; } = new(string.Empty, string.Empty, string.Empty);
             public DisplayMode Mode { get; set; } = new DisplayMode();
-            public override string ToString() => $"{Process} → {Mode.Width}x{Mode.Height}@{Mode.Frequency}Hz";
-        }
-
-        private class ProcessItem
-        {
-            public string Name { get; set; } = string.Empty;
-            public int Id { get; set; }
-            public string Path { get; set; } = string.Empty;
-            public override string ToString() => $"{Name} ({Id}) - {Path}";
+            public override string ToString() => $"{Presentation} → {Mode.Width}x{Mode.Height}@{Mode.Frequency}Hz";
         }
 
         public ProfileManagerForm(ProfileStore store, IProcessProvider? processProvider = null)
@@ -36,23 +33,26 @@ namespace DisplayModeSwitcher
             _processProvider = processProvider ?? new SystemProcessProvider();
 
             Text = "Profile verwalten";
-            Width = 400;
-            Height = 300;
+            Width = 660;
+            Height = 340;
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
             MinimizeBox = false;
 
-            _processBox = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Left = 10, Top = 10, Width = 150 };
-            _modeBox = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Left = 170, Top = 10, Width = 200 };
-            _addButton = new Button { Text = "Speichern", Left = 10, Top = 40, Width = 100 };
-            _removeButton = new Button { Text = "Entfernen", Left = 120, Top = 40, Width = 100 };
-            _profileList = new ListBox { Left = 10, Top = 80, Width = 360, Height = 170 };
+            _processBox = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Left = 10, Top = 10, Width = 360 };
+            _modeBox = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Left = 380, Top = 10, Width = 250 };
+            _showAllProcesses = new CheckBox { Text = "Alle Prozesse anzeigen", Left = 10, Top = 43, AutoSize = true };
+            _addButton = new Button { Text = "Speichern", Left = 10, Top = 70, Width = 100 };
+            _removeButton = new Button { Text = "Entfernen", Left = 120, Top = 70, Width = 100 };
+            _profileList = new ListBox { Left = 10, Top = 110, Width = 620, Height = 180, HorizontalScrollbar = true };
 
-            Controls.AddRange(new Control[] { _processBox, _modeBox, _addButton, _removeButton, _profileList });
+            Controls.AddRange(new Control[] { _processBox, _modeBox, _showAllProcesses, _addButton, _removeButton, _profileList });
 
             Load += ProfileManagerForm_Load;
             _addButton.Click += OnAdd;
             _removeButton.Click += OnRemove;
+            _showAllProcesses.CheckedChanged += (_, _) => RefreshProcesses();
+            FormClosing += (_, _) => { _isClosing = true; _processLoadVersion++; };
         }
 
         private void ProfileManagerForm_Load(object? sender, EventArgs e)
@@ -65,29 +65,41 @@ namespace DisplayModeSwitcher
         private void RefreshProcesses()
         {
             _processBox.Items.Clear();
+            var loadVersion = ++_processLoadVersion;
+            var includeBackgroundProcesses = _showAllProcesses.Checked;
             Task.Run(() =>
             {
-                var list = _processProvider.GetCurrentSessionProcesses()
-                    .Where(process => !process.ExecutablePath.Contains("System32", StringComparison.OrdinalIgnoreCase))
-                    .Select(process => new ProcessItem
-                    {
-                        Name = System.IO.Path.GetFileName(process.ExecutablePath),
-                        Id = process.Id,
-                        Path = process.ExecutablePath
-                    })
-                    .OrderBy(p => p.Name)
+                var processes = _processProvider.GetCurrentSessionProcesses()
+                    .Select(CreateDisplayInfo)
                     .ToList();
+                var list = ProcessPresentation.CreateItems(processes, Application.ExecutablePath, includeBackgroundProcesses);
 
-                if (IsDisposed || !IsHandleCreated)
+                if (_isClosing || IsDisposed || !IsHandleCreated)
                     return;
-                BeginInvoke(new Action(() =>
+                try { BeginInvoke(new Action(() =>
                 {
+                    if (_isClosing || IsDisposed || loadVersion != _processLoadVersion)
+                        return;
                     foreach (var item in list)
                         _processBox.Items.Add(item);
                     if (_processBox.Items.Count > 0)
                         _processBox.SelectedIndex = 0;
-                }));
+                })); }
+                catch (InvalidOperationException) { }
             });
+        }
+
+        private static ProcessDisplayInfo CreateDisplayInfo(ProcessIdentity identity)
+        {
+            try
+            {
+                using var process = Process.GetProcessById(identity.Id);
+                return new ProcessDisplayInfo(identity, null, null, process.MainWindowTitle, process.MainWindowHandle);
+            }
+            catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException)
+            {
+                return new ProcessDisplayInfo(identity, null, null, null, 0);
+            }
         }
 
         private void RefreshModes()
@@ -105,13 +117,13 @@ namespace DisplayModeSwitcher
             _profileList.Items.Clear();
             foreach (var kvp in _store.Profiles)
             {
-                _profileList.Items.Add(new ProfileListItem { Process = kvp.Key, Mode = kvp.Value });
+                _profileList.Items.Add(new ProfileListItem { ProcessKey = kvp.Key, Presentation = ProcessPresentation.CreateProfileItem(kvp.Key), Mode = kvp.Value });
             }
         }
 
         private void OnAdd(object? sender, EventArgs e)
         {
-            if (_processBox.SelectedItem is not ProcessItem processItem ||
+            if (_processBox.SelectedItem is not ProcessPresentationItem processItem ||
                 _modeBox.SelectedItem is not DisplayMode mode)
                 return;
             var process = processItem.Path;
@@ -133,12 +145,12 @@ namespace DisplayModeSwitcher
         {
             if (_profileList.SelectedItem is not ProfileListItem item)
                 return;
-            if (_store.Profiles.TryRemove(item.Process, out _))
+            if (_store.Profiles.TryRemove(item.ProcessKey, out _))
             {
                 var result = _store.Save();
                 if (!result.Success)
                 {
-                    _store.Profiles[item.Process] = item.Mode;
+                    _store.Profiles[item.ProcessKey] = item.Mode;
                     MessageBox.Show(result.Error ?? "Das Profil konnte nicht entfernt werden.", "Profile", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 }
                 RefreshProfileList();

@@ -14,7 +14,9 @@ var tests = new (string Name, Action Run)[]
     ("Manager-Lifecycle ist abbrechbar und idempotent", ManagerLifecycleIsCancellable),
     ("Autostart formatiert und verifiziert den Befehl", AutostartUsesVerifiedQuotedCommand),
     ("Profile speichern, laden und schützen beschädigte Daten", ProfilePersistenceHandlesErrors),
-    ("Legacy-Profile werden ohne Löschen migriert", LegacyProfilesMigrateSafely)
+    ("Legacy-Profile werden ohne Löschen migriert", LegacyProfilesMigrateSafely),
+    ("Prozessnamen verwenden verständliche Fallbacks", ProcessNamesUseFriendlyFallbacks),
+    ("Prozessliste filtert, dedupliziert und sortiert", ProcessListFiltersDeduplicatesAndSorts)
 };
 
 var failures = new List<string>();
@@ -226,6 +228,43 @@ static void LegacyProfilesMigrateSafely()
         Equal("not-json", File.ReadAllText(legacy));
         True(!store.Save().Success);
     });
+}
+
+static void ProcessNamesUseFriendlyFallbacks()
+{
+    Equal("RV There Yet?", ProcessPresentation.GetFriendlyName("Ride.exe", "RV There Yet?", "Ride", "Fenster"));
+    Equal("Beschreibung", ProcessPresentation.GetFriendlyName("Ride.exe", "Ride", "Beschreibung", "Fenster"));
+    Equal("Mein Spiel", ProcessPresentation.GetFriendlyName("Ride.exe", null, null, "  Mein   Spiel  "));
+    Equal("Ride.exe", ProcessPresentation.GetFriendlyName("Ride.exe", "Ride", "Ride.exe", "  "));
+
+    var profile = ProcessPresentation.CreateProfileItem("game.exe");
+    Equal("game.exe", profile.ToString());
+}
+
+static void ProcessListFiltersDeduplicatesAndSorts()
+{
+    var tool = ProcessMatcher.CanonicalizePath(@"C:\Tools\DisplayModeSwitcher.exe");
+    var game = ProcessMatcher.CanonicalizePath(@"C:\Games\Ride.exe");
+    var browser = ProcessMatcher.CanonicalizePath(@"C:\Apps\Browser.exe");
+    var background = ProcessMatcher.CanonicalizePath(@"C:\Apps\Helper.exe");
+    var processes = new[]
+    {
+        new ProcessDisplayInfo(new(4, DateTime.UnixEpoch, tool), null, null, "Switcher", 1),
+        new ProcessDisplayInfo(new(3, DateTime.UnixEpoch, game), "RV There Yet?", null, "Ride", 1),
+        new ProcessDisplayInfo(new(2, DateTime.UnixEpoch, game), "RV There Yet?", null, "Ride", 1),
+        new ProcessDisplayInfo(new(5, DateTime.UnixEpoch, browser), null, "Acme Browser", "Browser", 1),
+        new ProcessDisplayInfo(new(6, DateTime.UnixEpoch, background), "Helper", null, null, 0)
+    };
+
+    var defaultItems = ProcessPresentation.CreateItems(processes, tool, includeBackgroundProcesses: false);
+    Equal(2, defaultItems.Count);
+    Equal("Acme Browser", defaultItems[0].DisplayName);
+    Equal("RV There Yet?", defaultItems[1].DisplayName);
+    Equal(game, defaultItems[1].Path);
+
+    var allItems = ProcessPresentation.CreateItems(processes, tool, includeBackgroundProcesses: true);
+    Equal(3, allItems.Count);
+    True(allItems.Any(item => item.Path == background));
 }
 
 static DisplayMode Mode(uint width, uint height, uint frequency) => new()
