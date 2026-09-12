@@ -7,25 +7,38 @@ namespace DisplayModeSwitcher
     public class TrayForm : Form
     {
         private readonly ProfileStore _store;
-        private NotifyIcon trayIcon;
-        private ContextMenuStrip contextMenu;
-        public TrayForm(ProfileStore store)
+        private readonly AutostartService _autostart;
+        private readonly ProfileManager _profileManager;
+        private readonly NotifyIcon trayIcon;
+        private readonly ContextMenuStrip contextMenu;
+        public TrayForm(ProfileStore store, AutostartService autostart, ProfileManager profileManager)
         {
             _store = store;
+            _autostart = autostart;
+            _profileManager = profileManager;
             contextMenu = new ContextMenuStrip();
 
             AddGroupedResolutions();
 
-            var autostartItem = new ToolStripMenuItem("Autostart") { CheckOnClick = true };
-            autostartItem.Checked = AutostartManager.IsEnabled();
-            autostartItem.CheckedChanged += (s, e) =>
+            var autostartItem = new ToolStripMenuItem("Autostart mit Windows");
+            RefreshAutostartItem(autostartItem);
+            autostartItem.Click += (s, e) =>
             {
-                if (autostartItem.Checked)
-                    AutostartManager.Enable();
-                else
-                    AutostartManager.Disable();
+                var current = _autostart.GetStatus();
+                var result = current.IsEnabled ? _autostart.Disable() : _autostart.Enable();
+                RefreshAutostartItem(autostartItem);
+                if (!result.Success)
+                    MessageBox.Show(result.Error ?? "Der Autostart-Status konnte nicht geändert werden.", "Autostart", MessageBoxButtons.OK, MessageBoxIcon.Error);
             };
             contextMenu.Items.Add(autostartItem);
+
+            var statusItem = new ToolStripMenuItem { Enabled = false };
+            contextMenu.Items.Add(statusItem);
+            contextMenu.Opening += (s, e) =>
+            {
+                RefreshAutostartItem(autostartItem);
+                statusItem.Text = $"Profilstatus: {_profileManager.Status.Message}";
+            };
 
             var manageItem = new ToolStripMenuItem("Profile verwalten...");
             manageItem.Click += (s, e) =>
@@ -53,18 +66,21 @@ namespace DisplayModeSwitcher
             ShowInTaskbar = false;
             FormBorderStyle = FormBorderStyle.FixedToolWindow;
             Opacity = 0;
+
+            Shown += (s, e) =>
+            {
+                Hide();
+                if (_store.LastError is not null)
+                    MessageBox.Show(_store.LastError, "Profile", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            };
         }
 
-        private void AddResolutionOption(string label, uint width, uint height, uint hz)
+        private void RefreshAutostartItem(ToolStripMenuItem item)
         {
-            var item = new ToolStripMenuItem(label);
-            item.Click += (s, e) =>
-            {
-                bool success = DisplayManager.SetDisplayMode(width, height, hz);
-                if (!success)
-                    MessageBox.Show($"Fehler beim Umschalten auf {label}", "Fehler", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            };
-            contextMenu.Items.Add(item);
+            var status = _autostart.GetStatus();
+            item.Checked = status.IsEnabled;
+            item.Enabled = status.Error is null;
+            item.ToolTipText = status.Error ?? string.Empty;
         }
 
 
@@ -72,6 +88,13 @@ namespace DisplayModeSwitcher
         {
             trayIcon.Visible = false;
             base.OnFormClosing(e);
+        }
+
+        protected override void OnFormClosed(FormClosedEventArgs e)
+        {
+            trayIcon.Dispose();
+            contextMenu.Dispose();
+            base.OnFormClosed(e);
         }
 
         private void AddGroupedResolutions()
@@ -95,9 +118,9 @@ namespace DisplayModeSwitcher
 
                     item.Click += (s, e) =>
                     {
-                        bool success = DisplayManager.SetDisplayMode(width, height, freq);
-                        if (!success)
-                            MessageBox.Show($"Fehler beim Umschalten auf {width}x{height} @ {freq}Hz", "Fehler", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        var result = DisplayManager.SetDisplayMode(width, height, freq);
+                        if (!result.Success)
+                            MessageBox.Show(result.Error ?? $"Fehler beim Umschalten auf {width}x{height} @ {freq}Hz", "Anzeigemodus", MessageBoxButtons.OK, MessageBoxIcon.Error);
                     };
 
                     submenu.DropDownItems.Add(item);

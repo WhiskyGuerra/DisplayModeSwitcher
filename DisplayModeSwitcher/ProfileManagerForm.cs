@@ -1,5 +1,4 @@
 using System;
-using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -14,6 +13,7 @@ namespace DisplayModeSwitcher
         private readonly Button _addButton;
         private readonly Button _removeButton;
         private readonly ListBox _profileList;
+        private readonly IProcessProvider _processProvider;
 
         private class ProfileListItem
         {
@@ -30,9 +30,10 @@ namespace DisplayModeSwitcher
             public override string ToString() => $"{Name} ({Id}) - {Path}";
         }
 
-        public ProfileManagerForm(ProfileStore store)
+        public ProfileManagerForm(ProfileStore store, IProcessProvider? processProvider = null)
         {
             _store = store;
+            _processProvider = processProvider ?? new SystemProcessProvider();
 
             Text = "Profile verwalten";
             Width = 400;
@@ -66,33 +67,19 @@ namespace DisplayModeSwitcher
             _processBox.Items.Clear();
             Task.Run(() =>
             {
-                int currentSession = Process.GetCurrentProcess().SessionId;
-                var list = Process.GetProcesses()
-                    .Select(p =>
+                var list = _processProvider.GetCurrentSessionProcesses()
+                    .Where(process => !process.ExecutablePath.Contains("System32", StringComparison.OrdinalIgnoreCase))
+                    .Select(process => new ProcessItem
                     {
-                        try
-                        {
-                            string path = p.MainModule!.FileName;
-                            return new { Proc = p, Path = path };
-                        }
-                        catch
-                        {
-                            return null;
-                        }
-                    })
-                    .Where(x => x != null &&
-                                x.Proc.SessionId == currentSession &&
-                                !string.IsNullOrEmpty(x.Path) &&
-                                !x.Path.Contains("System32", StringComparison.OrdinalIgnoreCase))
-                    .Select(x => new ProcessItem
-                    {
-                        Name = x.Proc.ProcessName + ".exe",
-                        Id = x.Proc.Id,
-                        Path = x.Path!
+                        Name = System.IO.Path.GetFileName(process.ExecutablePath),
+                        Id = process.Id,
+                        Path = process.ExecutablePath
                     })
                     .OrderBy(p => p.Name)
                     .ToList();
 
+                if (IsDisposed || !IsHandleCreated)
+                    return;
                 BeginInvoke(new Action(() =>
                 {
                     foreach (var item in list)
@@ -124,12 +111,21 @@ namespace DisplayModeSwitcher
 
         private void OnAdd(object? sender, EventArgs e)
         {
-            if (_processBox.SelectedItem == null || _modeBox.SelectedItem == null)
+            if (_processBox.SelectedItem is not ProcessItem processItem ||
+                _modeBox.SelectedItem is not DisplayMode mode)
                 return;
-            string process = (_processBox.SelectedItem as ProcessItem)?.Name ?? _processBox.SelectedItem.ToString()!;
-            var mode = (DisplayMode)_modeBox.SelectedItem;
+            var process = processItem.Path;
+            var hadPrevious = _store.Profiles.TryGetValue(process, out var previous);
             _store.Profiles[process] = mode;
-            _store.Save();
+            var result = _store.Save();
+            if (!result.Success)
+            {
+                if (hadPrevious && previous is not null)
+                    _store.Profiles[process] = previous;
+                else
+                    _store.Profiles.TryRemove(process, out _);
+                MessageBox.Show(result.Error ?? "Das Profil konnte nicht gespeichert werden.", "Profile", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
             RefreshProfileList();
         }
 
@@ -139,7 +135,12 @@ namespace DisplayModeSwitcher
                 return;
             if (_store.Profiles.TryRemove(item.Process, out _))
             {
-                _store.Save();
+                var result = _store.Save();
+                if (!result.Success)
+                {
+                    _store.Profiles[item.Process] = item.Mode;
+                    MessageBox.Show(result.Error ?? "Das Profil konnte nicht entfernt werden.", "Profile", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
                 RefreshProfileList();
             }
         }

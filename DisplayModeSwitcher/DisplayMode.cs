@@ -2,7 +2,7 @@ namespace DisplayModeSwitcher
 {
     public class DisplayMode
     {
-        public string Label { get; set; }
+        public string Label { get; set; } = string.Empty;
         public uint Width { get; set; }
         public uint Height { get; set; }
         public uint Frequency { get; set; }
@@ -12,7 +12,7 @@ namespace DisplayModeSwitcher
             return Label;
         }
     
-        public override bool Equals(object obj)
+        public override bool Equals(object? obj)
         {
             return obj is DisplayMode other &&
                    Width == other.Width &&
