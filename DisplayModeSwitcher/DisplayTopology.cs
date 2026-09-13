@@ -61,6 +61,33 @@ public sealed record EndpointDisplayMode(
 }
 
 /// <summary>
+/// Wählt aus Treiber-Dubletten eines logischen Modus deterministisch genau den
+/// Kandidaten, dessen tatsächlich gesetzte Farbtiefe dem aktuellen Modus am
+/// nächsten bleibt. DisplayFlags und FixedOutput dienen nur als stabile
+/// Tie-Breaker, da sie beim gezielten Umschalten nicht geschrieben werden.
+/// </summary>
+internal static class EndpointDisplayModeCandidateSelector
+{
+    public static EndpointDisplayMode? Select(
+        IEnumerable<EndpointDisplayMode> candidates,
+        EndpointDisplayMode current)
+    {
+        ArgumentNullException.ThrowIfNull(candidates);
+        ArgumentNullException.ThrowIfNull(current);
+
+        return candidates
+            .Distinct()
+            .OrderByDescending(candidate => candidate.BitsPerPixel == current.BitsPerPixel)
+            .ThenByDescending(candidate => candidate.BitsPerPixel)
+            .ThenByDescending(candidate => candidate.DisplayFlags == current.DisplayFlags)
+            .ThenByDescending(candidate => candidate.FixedOutput == current.FixedOutput)
+            .ThenBy(candidate => candidate.DisplayFlags)
+            .ThenBy(candidate => candidate.FixedOutput)
+            .FirstOrDefault();
+    }
+}
+
+/// <summary>
 /// Ein physisches aktives Display-Target. MonitorDevicePath ist die einzige
 /// persistierbare Identität; GDI-Name, Beschriftung und Position beschreiben
 /// ausschließlich das aktuelle Routing.

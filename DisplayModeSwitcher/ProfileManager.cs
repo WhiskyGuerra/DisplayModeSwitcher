@@ -1235,12 +1235,17 @@ public sealed class TargetedProfileMonitor
             SetStatus(pending ? ProfileMonitorState.PendingLaunch : ProfileMonitorState.Active, "Profil bleibt aktiv; Ziel-Batch wird gemäß Richtlinie nicht nachgesetzt.", active.ProfileProcess, PrimaryMode(active.Profile), reason, utcNow, active.LaunchPlan.Strategy);
             return;
         }
-        if (reapply && !pending) active.ReapplyCount++;
         // Once resolved, even an originally dynamic PrimaryMonitor selector is
         // pinned to its concrete physical path. A disconnect must fail instead
         // of silently rebinding a later apply to another monitor.
         var result = Apply(reapply ? CreateBoundTargets(active) : active.Profile.Targets);
         active.LastApplyErrors = result.Errors;
+        var targetWasChanged = result.Receipts.Any(item => item.ToolChanged);
+        // Erfolgreiche Prüf-Batches ohne Displayänderung verbrauchen das
+        // begrenzte Startup-Budget nicht. Ein echter oder fehlgeschlagener
+        // Korrekturversuch behält dagegen die bisherige Zählsemantik.
+        if (reapply && !pending && (!result.Success || targetWasChanged))
+            active.ReapplyCount++;
         if (result.Success)
         {
             if (!active.InitialApplied)
@@ -1261,8 +1266,10 @@ public sealed class TargetedProfileMonitor
             _retryCount = 0; active.PendingFailures = 0; _nextActionUtc = utcNow + _verificationInterval;
             SetStatus(pending ? ProfileMonitorState.PendingLaunch : ProfileMonitorState.Active,
                 pending ? "Steam-Start wartet auf den Zielprozess; Ziel-Batch ist aktiv." : $"Profilziele für '{active.ProfileProcess}' sind aktiv.",
-                active.ProfileProcess, PrimaryMode(active.Profile), reapply ? "Ziel-Batch nachgesetzt" : "Ziel-Batch angewendet", utcNow, active.LaunchPlan.Strategy);
-            if (reapply && result.Receipts.Any(item => item.ToolChanged))
+                active.ProfileProcess, PrimaryMode(active.Profile), reapply
+                    ? targetWasChanged ? "Ziel-Batch nachgesetzt" : "Ziel-Batch geprüft; keine Abweichung"
+                    : "Ziel-Batch angewendet", utcNow, active.LaunchPlan.Strategy);
+            if (reapply && targetWasChanged)
                 AddEvent(utcNow, $"Abweichende Profilziele nachgesetzt ({FormatReapplies(active)}).");
             return;
         }

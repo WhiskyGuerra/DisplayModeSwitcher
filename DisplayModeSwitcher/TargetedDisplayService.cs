@@ -656,17 +656,12 @@ public sealed class TargetedDisplayService : ITargetedDisplayService
             return (null, TargetedDisplayErrorCode.ModeUnavailable,
                 "Der profilierte Modus ist auf genau dieser Anzeigequelle nicht verfügbar.");
         }
-        if (candidates.Length == 1)
-            return (candidates[0], null, string.Empty);
 
-        var preferred = candidates
-            .Where(candidate => candidate.BitsPerPixel == current.BitsPerPixel &&
-                candidate.DisplayFlags == current.DisplayFlags)
-            .ToArray();
-        return preferred.Length == 1
-            ? (preferred[0], null, string.Empty)
-            : (null, TargetedDisplayErrorCode.ModeAmbiguous,
-                "Mehrere native Moduskandidaten bleiben auch nach Bits-per-Pixel- und Flag-Abgleich mehrdeutig.");
+        var selected = EndpointDisplayModeCandidateSelector.Select(candidates, current);
+        return selected is not null
+            ? (selected, null, string.Empty)
+            : (null, TargetedDisplayErrorCode.ModeUnavailable,
+                "Der profilierte Modus konnte keinem nativen Moduskandidaten zugeordnet werden.");
     }
 
     private static bool AreEquivalent(EndpointDisplayMode first, EndpointDisplayMode second) =>

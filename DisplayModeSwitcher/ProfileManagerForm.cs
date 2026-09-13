@@ -141,6 +141,7 @@ public class ProfileManagerForm : Form
     private void LoadModes(MonitorChoice? choice, DisplayMode? preserved)
     {
         var version = ++_modeVersion; _modeBox.Enabled = false; _modeBox.Items.Clear();
+        UpdateState();
         if (choice is null) { if (preserved is not null) SelectMode(preserved, true); return; }
         _targetStatus.Text = "Anzeigemodi werden gelesen…";
         Task.Run(() => _targets.GetModes(choice, preserved)).ContinueWith(task => Ui(() =>
@@ -152,6 +153,7 @@ public class ProfileManagerForm : Form
             _modeBox.Enabled = task.Result.Success;
             if (preserved is not null) SelectMode(preserved, true);
             _targetStatus.Text = task.Result.Success ? "Modus bewusst auswählen; es wird nichts sofort angewendet." : task.Result.Error;
+            UpdateState();
         }));
     }
 
@@ -208,7 +210,13 @@ public class ProfileManagerForm : Form
     private void SaveProfile(object? sender, EventArgs e)
     {
         if (_processBox.SelectedItem is not ProcessPresentationItem process || _policyBox.SelectedItem is not PolicyItem policy) { MessageBox.Show(this, "Bitte eine Anwendung und ein Verhalten auswählen.", "Profile", MessageBoxButtons.OK, MessageBoxIcon.Information); return; }
-        if (PendingTargetEdit()) { TargetError("Bitte die begonnene Zieländerung zuerst mit ‚Monitor hinzufügen‘ oder ‚Ziel aktualisieren‘ übernehmen – oder über ‚Neues Ziel‘ verwerfen."); return; }
+        var preparation = ProfileTargetSavePreparation.Apply(
+            _targets,
+            _targetList.SelectedItem as TargetDraftState,
+            _monitorBox.SelectedItem as MonitorChoice,
+            _modeBox.SelectedItem as DisplayMode);
+        if (!preparation.Success) { TargetError(preparation.Error!); return; }
+        if (preparation.TargetUpdated) { RefreshTargets(); StartNewTarget(); }
         if (!_targets.CanSave) { TargetError(_targets.Targets.Count == 0 ? "Bitte mindestens ein Monitorziel hinzufügen." : "Ein Monitorziel ist mehrdeutig, nicht persistierbar oder Teil einer Klon-Gruppe und muss zuerst korrigiert werden."); return; }
         var result = ProfileEditWorkflow.Save(_store, _editingKey, process.Path, _targets.BuildProfile(policy.Policy));
         if (!result.Success) MessageBox.Show(this, result.Error ?? "Das Profil konnte nicht gespeichert werden.", "Profile", MessageBoxButtons.OK, MessageBoxIcon.Error);
@@ -239,14 +247,17 @@ public class ProfileManagerForm : Form
         if (_monitorBox.SelectedItem is not MonitorChoice choice) return false;
         if (_targetList.SelectedItem is not TargetDraftState state) return true;
         if (!MonitorSelectorIdentity.Equals(state.Target.MonitorSelector, choice.Selector)) return true;
-        return _modeBox.SelectedItem is DisplayMode mode && !mode.Equals(state.Target.Mode);
+        return _modeBox.SelectedItem is not DisplayMode mode || !mode.Equals(state.Target.Mode);
     }
 
     private void UpdateState()
     {
         if (_suppress) return; var dirty = Dirty();
         _editStateLabel.Text = _editingKey is null ? "Neues Profil — Monitorwahl erforderlich" : dirty ? "Profil bearbeitet — erst speichern, dann starten" : "Gespeichertes Profil";
-        _saveButton.Enabled = _targets.CanSave && !PendingTargetEdit();
+        _saveButton.Enabled = _targets.CanSave && ProfileTargetSavePreparation.CanPrepare(
+            _targetList.SelectedItem as TargetDraftState,
+            _monitorBox.SelectedItem as MonitorChoice,
+            _modeBox.SelectedItem as DisplayMode);
         var item = _profileList.SelectedItem as ProfileItem;
         _launchButton.Enabled = !_launching && !dirty && item is not null && !_targets.HasBlockingResolution && item.Profile.Targets.Count > 0 && Path.IsPathFullyQualified(item.Key) && !item.Missing;
     }

@@ -91,6 +91,54 @@ public static class TargetedProfileMonitorTests
         Expect(continuous.Applies.Count == 3, "Continuous darf batchweise weiter nachsetzen.");
     }
 
+    public static void StartupNoOpChecksPreserveReapplyBudget()
+    {
+        var path = "C:\\Games\\startup-noop.exe";
+        var display = new FakeTargetedDisplay();
+        display.ApplyResults.Enqueue(Ok(Receipt(0, "PATH-A", false, 120, 120)));
+        for (var index = 0; index < 3; index++)
+            display.ApplyResults.Enqueue(Ok(Receipt(0, "PATH-A", false, 120, 120)));
+        display.ApplyResults.Enqueue(Ok(Receipt(0, "PATH-A", true, 75, 120)));
+        display.ApplyResults.Enqueue(Ok(Receipt(0, "PATH-A", true, 76, 120)));
+        display.ApplyResults.Enqueue(Ok(Receipt(0, "PATH-A", true, 77, 120)));
+        var processes = new FakeProcesses(Process(path));
+        var monitor = Monitor(path, Profile(ProfileRetentionPolicy.Startup), display, processes);
+
+        monitor.Start(T0); monitor.Poll(T0);
+        monitor.Poll(T0.AddSeconds(1)); monitor.Poll(T0.AddSeconds(2)); monitor.Poll(T0.AddSeconds(3));
+        Expect(monitor.Status.ReapplyCount == 0, "Erfolgreiche No-op-Prüfungen dürfen das Startup-Budget nicht verbrauchen.");
+        Expect(monitor.Status.LastResult == "Ziel-Batch geprüft; keine Abweichung", "Ein No-op darf im Status nicht als Nachsetzung erscheinen.");
+
+        monitor.Poll(T0.AddSeconds(4));
+        Expect(monitor.Status.ReapplyCount == 1, "Die erste spätere tatsächliche Nachsetzung muss genau einmal zählen.");
+        monitor.Poll(T0.AddSeconds(5)); monitor.Poll(T0.AddSeconds(6));
+        Expect(monitor.Status.ReapplyCount == 3 && display.Applies.Count == 7, "Drei tatsächliche Nachsetzungen müssen das Startup-Limit erreichen.");
+        monitor.Poll(T0.AddSeconds(7));
+        Expect(display.Applies.Count == 7, "Nach drei echten Versuchen darf kein vierter Korrekturbatch laufen.");
+
+        processes.Items.Clear(); monitor.Poll(T0.AddSeconds(8));
+        var restore = display.Restores.Single().Single();
+        Expect(restore.ToolChanged && restore.OriginalMode.Frequency == 120,
+            "Eine späte tatsächliche Nachsetzung muss weiterhin dem unveränderten Initialbeleg gehören.");
+    }
+
+    public static void FailedStartupCorrectionsStillConsumeBudget()
+    {
+        var path = "C:\\Games\\startup-failures.exe";
+        var display = new FakeTargetedDisplay();
+        display.ApplyResults.Enqueue(Ok(Receipt(0, "PATH-A", false, 120, 120)));
+        display.ApplyResults.Enqueue(Fail("Fehler 1"));
+        display.ApplyResults.Enqueue(Fail("Fehler 2"));
+        display.ApplyResults.Enqueue(Fail("Fehler 3"));
+        var monitor = Monitor(path, Profile(ProfileRetentionPolicy.Startup), display, new FakeProcesses(Process(path)));
+
+        monitor.Start(T0); monitor.Poll(T0);
+        monitor.Poll(T0.AddSeconds(1)); monitor.Poll(T0.AddSeconds(6)); monitor.Poll(T0.AddSeconds(11));
+        Expect(monitor.Status.ReapplyCount == 3, "Fehlgeschlagene Korrekturversuche müssen das Startup-Budget weiterhin verbrauchen.");
+        monitor.Poll(T0.AddSeconds(16));
+        Expect(display.Applies.Count == 4, "Nach drei fehlgeschlagenen Korrekturversuchen muss das Startup-Limit ebenfalls greifen.");
+    }
+
     public static void ReapplyRemainsBoundAndOwnsLateChanges()
     {
         var path = "C:\\Games\\bound.exe";

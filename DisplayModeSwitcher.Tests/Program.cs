@@ -92,6 +92,8 @@ var tests = new (string Name, Action Run)[]
     ("Restore folgt dem Gerätepfad und behält Disconnect-Schulden", TargetedDisplayServiceTests.RestoreUsesPathAfterGdiReorderAndKeepsDisconnectDebt),
     ("Ein-Hertz-Toleranz entscheidet nur über die Notwendigkeit eines Writes", TargetedDisplayServiceTests.FrequencyToleranceControlsOnlyWhetherToWrite),
     ("Native Moduskandidaten werden über aktuelle BPP und Flags aufgelöst", TargetedDisplayServiceTests.CandidateUsesCurrentBppAndFlags),
+    ("Native Modusdubletten mit gleichen wirksamen Feldern werden zusammengefasst", TargetedDisplayServiceTests.CandidateCollapsesEquivalentNativeDuplicates),
+    ("Native Moduskandidaten bevorzugen die aktuelle Farbtiefe", TargetedDisplayServiceTests.CandidatePrefersCurrentBppWithoutExactFlagMatch),
     ("Native Zielaufrufe erlauben nur sichere Felder und zwei Flag-Arten", TargetedDisplayServiceTests.NativeContractHasOnlyAllowedFieldsAndKinds),
     ("Alle nativen Rückgabecodes einschließlich Restart sind strukturiert", TargetedDisplayServiceTests.NativeReturnCodesAreCompleteAndRestartFailsApply),
     ("Target-Profilengine aktiviert Primär-, Specific- und Mehrfachziele", TargetedProfileMonitorTests.InitialBatchesAreExact),
@@ -100,6 +102,8 @@ var tests = new (string Name, Action Run)[]
     ("Target-Profilengine sperrt bei Rollback-Schuld Apply und Start", TargetedProfileMonitorTests.RollbackDebtBlocksFurtherWork),
     ("Target-Profilengine stellt nur noch offene Zielschulden wieder her", TargetedProfileMonitorTests.RestoreDebtRetriesOnlyRemainingTarget),
     ("Target-Profilengine bewahrt Initialbelege bei Nachsetzungen", TargetedProfileMonitorTests.ReapplyPoliciesAndInitialReceipts),
+    ("Target-Profilengine zählt No-op-Prüfungen nicht als Startup-Nachsetzungen", TargetedProfileMonitorTests.StartupNoOpChecksPreserveReapplyBudget),
+    ("Target-Profilengine zählt fehlgeschlagene Startup-Korrekturen weiterhin", TargetedProfileMonitorTests.FailedStartupCorrectionsStillConsumeBudget),
     ("Target-Profilengine bindet Nachsetzungen an initiale Gerätepfade", TargetedProfileMonitorTests.ReapplyRemainsBoundAndOwnsLateChanges),
     ("Target-Profilengine restauriert nach Teilrollback den Initialbeleg", TargetedProfileMonitorTests.ReapplyDebtThenRestoresInitialReceipt),
     ("Target-Profilengine startet Direct erst nach Ziel-Batch", TargetedProfileMonitorTests.DirectLaunchSafetyAndRestore),
@@ -120,8 +124,11 @@ var tests = new (string Name, Action Run)[]
     ("Nicht verfügbarer gespeicherter Modus bleibt sichtbar", ProfileTargetEditorTests.UnavailableStoredModeRemainsVisible),
     ("Editoridentität bleibt bei GDI-Neuordnung am Gerätepfad", ProfileTargetEditorTests.GdiReorderDoesNotChangeSpecificChoice),
     ("Klon- und unpersistierbare Endpoints sind nicht auswählbar", ProfileTargetEditorTests.CloneAndUnpersistableEndpointsCannotBeChosen),
-    ("Unsichere Quellen und mehrdeutige native Modi sind nicht auswählbar", ProfileTargetEditorTests.UnsafeSourcesAndAmbiguousNativeModesCannotBeChosen),
-    ("Tiefe Zieländerungen markieren den Entwurf als geändert", ProfileTargetEditorTests.DirtyStateTracksDeepTargetChanges)
+    ("Unsichere Quellen blockieren, native Modusdubletten werden zusammengefasst", ProfileTargetEditorTests.UnsafeSourcesAreBlockedAndNativeDuplicatesAreCollapsed),
+    ("Native Modusdubletten mit verschiedener Farbtiefe bleiben ein logischer Modus", ProfileTargetEditorTests.NativeDuplicatesWithDifferentBppRemainOneLogicalMode),
+    ("Tiefe Zieländerungen markieren den Entwurf als geändert", ProfileTargetEditorTests.DirtyStateTracksDeepTargetChanges),
+    ("Profilspeichern übernimmt nur Modusänderungen am ausgewählten Ziel", ProfileTargetEditorTests.ProfileSaveAcceptsOnlyModeChangeOnSelectedTarget),
+    ("Profilspeichern blockiert während der Modus noch lädt", ProfileTargetEditorTests.ProfileSaveBlocksWhileSelectedTargetModeIsLoading)
 };
 
 var failures = new List<string>();

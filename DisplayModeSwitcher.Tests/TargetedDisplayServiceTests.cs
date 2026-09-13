@@ -75,14 +75,6 @@ internal static class TargetedDisplayServiceTests
 
         AssertPreflightBlocked(fixture => fixture.Target("path-a", 1111, 777, 60), null,
             TargetedDisplayErrorCode.ModeUnavailable);
-        AssertPreflightBlocked(fixture => fixture.Target("path-a", 1280, 720, 60), fixture =>
-        {
-            fixture.Topology.Available[@"\\.\DISPLAY1"] =
-            [
-                Native(1280, 720, 60, 24, 0),
-                Native(1280, 720, 60, 32, 2)
-            ];
-        }, TargetedDisplayErrorCode.ModeAmbiguous);
     }
 
     public static void EveryTestPrecedesFirstApply()
@@ -244,6 +236,41 @@ internal static class TargetedDisplayServiceTests
         ];
 
         var result = fixture.Service.Apply([fixture.Target("path-a", 1280, 720, 60)]);
+        True(result.Success);
+        Equal((uint)32, result.Receipts.Single().TargetMode.BitsPerPixel);
+        Equal((uint)2, result.Receipts.Single().TargetMode.DisplayFlags);
+    }
+
+    public static void CandidateCollapsesEquivalentNativeDuplicates()
+    {
+        var fixture = new TargetFixture();
+        fixture.Topology.Current[@"\\.\DISPLAY1"] = Native(1920, 1080, 60, 32, 0);
+        fixture.Topology.Available[@"\\.\DISPLAY1"] =
+        [
+            Native(1280, 720, 60, 32, 0),
+            new EndpointDisplayMode(1280, 720, 60, 32, 2, DisplayOrientation.Default, 1)
+        ];
+
+        var result = fixture.Service.Apply([fixture.Target("path-a", 1280, 720, 60)]);
+
+        True(result.Success);
+        Equal((uint)32, result.Receipts.Single().TargetMode.BitsPerPixel);
+        Equal((uint)0, result.Receipts.Single().TargetMode.DisplayFlags);
+        Equal((uint)0, result.Receipts.Single().TargetMode.FixedOutput);
+    }
+
+    public static void CandidatePrefersCurrentBppWithoutExactFlagMatch()
+    {
+        var fixture = new TargetFixture();
+        fixture.Topology.Current[@"\\.\DISPLAY1"] = Native(1920, 1080, 60, 32, 7);
+        fixture.Topology.Available[@"\\.\DISPLAY1"] =
+        [
+            Native(1280, 720, 60, 24, 7),
+            Native(1280, 720, 60, 32, 2)
+        ];
+
+        var result = fixture.Service.Apply([fixture.Target("path-a", 1280, 720, 60)]);
+
         True(result.Success);
         Equal((uint)32, result.Receipts.Single().TargetMode.BitsPerPixel);
         Equal((uint)2, result.Receipts.Single().TargetMode.DisplayFlags);

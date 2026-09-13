@@ -122,7 +122,7 @@ public static class ProfileTargetEditorTests
         Expect(!editor.GetModes(editor.Choices[0]).Success);
     }
 
-    public static void UnsafeSourcesAndAmbiguousNativeModesCannotBeChosen()
+    public static void UnsafeSourcesAreBlockedAndNativeDuplicatesAreCollapsed()
     {
         var duplicateGdi = Fake(
             Endpoint(PathA, "Alpha", true, source: 1, gdi: @"\\.\DISPLAY1"),
@@ -136,8 +136,27 @@ public static class ProfileTargetEditorTests
         ambiguous.Modes[1] = [EndpointMode(144), EndpointMode(144) with { FixedOutput = 1 }];
         var modeEditor = Ready(ambiguous);
         var result = modeEditor.GetModes(Specific(modeEditor, PathA));
-        Expect(result.Success && result.Modes.All(mode => mode.Frequency != 144));
-        Expect(!modeEditor.Add(Specific(modeEditor, PathA), Mode(144)).Success);
+        Expect(result.Success && result.Modes.Count(mode => mode.Frequency == 144) == 1);
+        Expect(modeEditor.Add(Specific(modeEditor, PathA), Mode(144)).Success);
+    }
+
+    public static void NativeDuplicatesWithDifferentBppRemainOneLogicalMode()
+    {
+        var endpoint = Endpoint(PathA, "Alpha", true);
+        var fake = Fake(endpoint);
+        fake.Modes[1] =
+        [
+            EndpointMode(144) with { BitsPerPixel = 24 },
+            EndpointMode(144) with { BitsPerPixel = 32, DisplayFlags = 2 },
+            EndpointMode(120)
+        ];
+
+        var editor = Ready(fake);
+        var result = editor.GetModes(Specific(editor, PathA));
+
+        Expect(result.Success);
+        Expect(result.Modes.Count(mode => mode.Frequency == 144) == 1);
+        Expect(result.Modes.Count == 2);
     }
 
     public static void DirtyStateTracksDeepTargetChanges()
@@ -146,6 +165,38 @@ public static class ProfileTargetEditorTests
         editor.Load(Profile(new SpecificMonitor(PathA, "Alpha"), Mode(120)));
         Expect(!editor.IsDirty);
         Expect(editor.Update(0, Specific(editor, PathA), Mode(144)).Success && editor.IsDirty);
+    }
+
+    public static void ProfileSaveAcceptsOnlyModeChangeOnSelectedTarget()
+    {
+        var editor = Ready(Fake(Endpoint(PathA, "Alpha", true), Endpoint(PathB, "Beta", false, source: 2)));
+        editor.Load(Profile(new SpecificMonitor(PathA, "Alpha"), Mode(120)));
+        var selected = editor.GetTargetStates().Single();
+        var sameMonitor = Specific(editor, PathA);
+
+        Expect(ProfileTargetSavePreparation.CanPrepare(selected, sameMonitor, Mode(144)));
+        var result = ProfileTargetSavePreparation.Apply(editor, selected, sameMonitor, Mode(144));
+        Expect(result.Success && result.TargetUpdated);
+        Expect(editor.Targets.Count == 1 && editor.Targets[0].Mode.Frequency == 144);
+        Expect(((SpecificMonitor)editor.Targets[0].MonitorSelector).MonitorDevicePath == PathA);
+
+        var beforeRejectedEdits = editor.Targets.Single();
+        Expect(!ProfileTargetSavePreparation.Apply(editor, editor.GetTargetStates().Single(), Specific(editor, PathB), Mode(120)).Success);
+        Expect(!ProfileTargetSavePreparation.Apply(editor, null, sameMonitor, Mode(120)).Success);
+        Expect(editor.Targets.Count == 1 && editor.Targets.Single().Equals(beforeRejectedEdits));
+    }
+
+    public static void ProfileSaveBlocksWhileSelectedTargetModeIsLoading()
+    {
+        var editor = Ready(Fake(Endpoint(PathA, "Alpha", true)));
+        editor.Load(Profile(new SpecificMonitor(PathA, "Alpha"), Mode(120)));
+        var selected = editor.GetTargetStates().Single();
+        var choice = Specific(editor, PathA);
+
+        Expect(!ProfileTargetSavePreparation.CanPrepare(selected, choice, null));
+        var result = ProfileTargetSavePreparation.Apply(editor, selected, choice, null);
+        Expect(!result.Success && result.Error!.Contains("geladen", StringComparison.OrdinalIgnoreCase));
+        Expect(editor.Targets.Single().Mode.Frequency == 120 && !editor.IsDirty);
     }
 
     private static ProfileTargetEditor Ready(FakeTopology fake) { var editor = new ProfileTargetEditor(fake); Expect(editor.RefreshTopology().Success); return editor; }

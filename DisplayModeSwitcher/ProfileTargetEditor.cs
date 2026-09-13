@@ -102,7 +102,7 @@ public sealed class ProfileTargetEditor
                 .Where(mode => mode.Orientation == currentResult.Value.Orientation)
                 .Distinct()
                 .GroupBy(mode => (mode.Width, mode.Height, mode.Frequency))
-                .Select(group => SelectSafeCandidate(group, currentResult.Value))
+                .Select(group => EndpointDisplayModeCandidateSelector.Select(group, currentResult.Value))
                 .OfType<EndpointDisplayMode>()
                 .OrderByDescending(mode => mode.Width)
                 .ThenByDescending(mode => mode.Height)
@@ -288,21 +288,6 @@ public sealed class ProfileTargetEditor
 
     private static bool SameMode(DisplayMode left, DisplayMode right) =>
         left.Width == right.Width && left.Height == right.Height && left.Frequency == right.Frequency;
-
-    private static EndpointDisplayMode? SelectSafeCandidate(
-        IEnumerable<EndpointDisplayMode> candidates,
-        EndpointDisplayMode current)
-    {
-        var exact = candidates.ToArray();
-        if (exact.Length == 1)
-            return exact[0];
-
-        var preferred = exact
-            .Where(candidate => candidate.BitsPerPixel == current.BitsPerPixel &&
-                candidate.DisplayFlags == current.DisplayFlags)
-            .ToArray();
-        return preferred.Length == 1 ? preferred[0] : null;
-    }
 
     private static bool IsNativeModeValid(EndpointDisplayMode mode) =>
         mode.Width > 0 && mode.Height > 0 && mode.Frequency > 0 && mode.BitsPerPixel > 0;
