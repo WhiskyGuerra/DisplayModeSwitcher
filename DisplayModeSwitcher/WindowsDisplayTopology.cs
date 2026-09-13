@@ -25,9 +25,17 @@ public sealed record WindowsTargetDeviceName(
     DisplayOutputTechnology OutputTechnology,
     uint ConnectorInstance);
 
+/// <summary>Begrenzt den nativen Aufruf auf Test oder temporäres Anwenden.</summary>
+public enum WindowsDisplayChangeKind
+{
+    ApplyTemporary,
+    Test
+}
+
 /// <summary>
-/// Kleine, ausschließlich lesende Fassade über die verwendeten Win32-APIs.
-/// Sie enthält absichtlich keinen Set-/Change-Aufruf.
+/// Kleine Fassade über die verwendeten Win32-APIs. Der einzige Schreibpfad ist
+/// ein expliziter, temporärer ChangeDisplaySettingsEx-Aufruf für genau eine
+/// benannte GDI-Quelle.
 /// </summary>
 public interface IWindowsDisplayApi
 {
@@ -44,6 +52,10 @@ public interface IWindowsDisplayApi
     int GetSourceDeviceName(DisplaySourceIdentity source, out string gdiSourceName);
     bool IsPrimarySource(string gdiSourceName);
     int ReadDisplaySettings(string gdiSourceName, int modeNumber, out EndpointDisplayMode? mode);
+    int ChangeDisplaySettings(
+        string gdiSourceName,
+        EndpointDisplayMode candidate,
+        WindowsDisplayChangeKind kind);
 }
 
 public sealed class WindowsDisplayTopologyService : IDisplayTopologyService
@@ -266,6 +278,13 @@ public sealed class WindowsDisplayTopologyService : IDisplayTopologyService
 
 public sealed class WindowsDisplayApi : IWindowsDisplayApi
 {
+    internal const uint CdsTest = 0x00000002;
+    internal const uint DmBitsPerPel = 0x00040000;
+    internal const uint DmPelsWidth = 0x00080000;
+    internal const uint DmPelsHeight = 0x00100000;
+    internal const uint DmDisplayFrequency = 0x00400000;
+    internal const uint TargetedModeFields = DmBitsPerPel | DmPelsWidth | DmPelsHeight | DmDisplayFrequency;
+
     private const uint DisplayConfigPathSupportVirtualMode = 0x00000008;
     private const uint DisplayDevicePrimaryDevice = 0x00000004;
     private const uint DisplayConfigModeInfoTypeSource = 1;
@@ -390,6 +409,39 @@ public sealed class WindowsDisplayApi : IWindowsDisplayApi
             nativeMode.DisplayInfo.DisplayFixedOutput);
         return WindowsDisplayTopologyService.ErrorSuccess;
     }
+
+    public int ChangeDisplaySettings(
+        string gdiSourceName,
+        EndpointDisplayMode candidate,
+        WindowsDisplayChangeKind kind)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(gdiSourceName);
+        ArgumentNullException.ThrowIfNull(candidate);
+        if (candidate.Width == 0 || candidate.Height == 0 || candidate.Frequency == 0 || candidate.BitsPerPixel == 0)
+            throw new ArgumentException("Der native Anzeigemodus ist unvollständig.", nameof(candidate));
+
+        var nativeMode = DevMode.Create();
+        nativeMode.Fields = TargetedModeFields;
+        nativeMode.BitsPerPel = candidate.BitsPerPixel;
+        nativeMode.PelsWidth = candidate.Width;
+        nativeMode.PelsHeight = candidate.Height;
+        nativeMode.DisplayFrequency = candidate.Frequency;
+
+        var flags = GetNativeChangeFlags(kind);
+        return NativeMethods.ChangeDisplaySettingsEx(
+            gdiSourceName,
+            ref nativeMode,
+            IntPtr.Zero,
+            flags,
+            IntPtr.Zero);
+    }
+
+    internal static uint GetNativeChangeFlags(WindowsDisplayChangeKind kind) => kind switch
+    {
+        WindowsDisplayChangeKind.ApplyTemporary => 0u,
+        WindowsDisplayChangeKind.Test => CdsTest,
+        _ => throw new ArgumentOutOfRangeException(nameof(kind))
+    };
 
     private static WindowsDisplayConfigPath ToPath(DisplayConfigPathInfo path)
     {
@@ -689,5 +741,13 @@ public sealed class WindowsDisplayApi : IWindowsDisplayApi
             int iModeNum,
             ref DevMode lpDevMode,
             uint dwFlags);
+
+        [DllImport("user32.dll", EntryPoint = "ChangeDisplaySettingsExW", CharSet = CharSet.Unicode, ExactSpelling = true)]
+        public static extern int ChangeDisplaySettingsEx(
+            string lpszDeviceName,
+            ref DevMode lpDevMode,
+            IntPtr hwnd,
+            uint dwFlags,
+            IntPtr lParam);
     }
 }

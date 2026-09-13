@@ -81,7 +81,19 @@ var tests = new (string Name, Action Run)[]
     ("Moduslisten lesen nur die Quelle des gewählten Monitors", AvailableModesReadOnlySelectedSource),
     ("Moduslisten deduplizieren die vollständige Modusidentität", AvailableModesDeduplicateFullIdentity),
     ("Native Display-Strukturen entsprechen den Win32-Größen und Offsets", NativeDisplayStructLayoutsMatchWin32),
-    ("Topologiesnapshots sind unveränderlich und führen keine Schreibaktion aus", TopologySnapshotsAreImmutableAndReadOnly)
+    ("Topologiesnapshots sind unveränderlich und führen keine Schreibaktion aus", TopologySnapshotsAreImmutableAndReadOnly),
+    ("Gezieltes Setzen beschreibt ausschließlich ausgewählte Quellen", TargetedDisplayServiceTests.OnlySelectedSourcesAreWritten),
+    ("Mehrmonitor-Apply bindet den Primärmonitor an seinen Gerätepfad", TargetedDisplayServiceTests.MultiTargetAndPrimaryAreBound),
+    ("Unsichere Monitor- und Modusauflösungen blockieren vor jedem Apply", TargetedDisplayServiceTests.UnsafePreflightCasesNeverApply),
+    ("Alle nativen Tests laufen vor dem ersten temporären Apply", TargetedDisplayServiceTests.EveryTestPrecedesFirstApply),
+    ("Reihenfolgeänderungen bleiben erlaubt, Quellenänderungen blockieren", TargetedDisplayServiceTests.TopologyReorderIsAcceptedButSourceChangeAborts),
+    ("Teilfehler rollen ausgewählte Monitore in umgekehrter Reihenfolge zurück", TargetedDisplayServiceTests.PartialFailureRollsBackInReverseOrder),
+    ("Fehlgeschlagener Rollback bleibt als wiederholbare Restore-Schuld erhalten", TargetedDisplayServiceTests.RollbackFailureRemainsDebt),
+    ("Restore folgt dem Gerätepfad und behält Disconnect-Schulden", TargetedDisplayServiceTests.RestoreUsesPathAfterGdiReorderAndKeepsDisconnectDebt),
+    ("Ein-Hertz-Toleranz entscheidet nur über die Notwendigkeit eines Writes", TargetedDisplayServiceTests.FrequencyToleranceControlsOnlyWhetherToWrite),
+    ("Native Moduskandidaten werden über aktuelle BPP und Flags aufgelöst", TargetedDisplayServiceTests.CandidateUsesCurrentBppAndFlags),
+    ("Native Zielaufrufe erlauben nur sichere Felder und zwei Flag-Arten", TargetedDisplayServiceTests.NativeContractHasOnlyAllowedFieldsAndKinds),
+    ("Alle nativen Rückgabecodes einschließlich Restart sind strukturiert", TargetedDisplayServiceTests.NativeReturnCodesAreCompleteAndRestartFailsApply)
 };
 
 var failures = new List<string>();
@@ -2010,5 +2022,16 @@ sealed class FakeWindowsDisplayApi : IWindowsDisplayApi
 
         mode = modes[modeNumber];
         return WindowsDisplayTopologyService.ErrorSuccess;
+    }
+
+    public int ChangeDisplaySettings(
+        string gdiSourceName,
+        EndpointDisplayMode candidate,
+        WindowsDisplayChangeKind kind)
+    {
+        MutationCalls++;
+        if (kind == WindowsDisplayChangeKind.ApplyTemporary)
+            CurrentModes[gdiSourceName] = candidate;
+        return 0;
     }
 }
