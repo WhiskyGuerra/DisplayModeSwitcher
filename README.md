@@ -23,10 +23,29 @@ automatisch.
 
 Ein ausgewähltes Profil mit vorhandenem vollständigem EXE-Pfad kann über
 **Im Profilmodus starten** kontrolliert gestartet werden. Das Tool setzt und
-bestätigt zuerst den Zielmodus und startet erst danach die EXE. Schlägt der
-Start fehl, wird ein zuvor vom Tool geänderter Modus sofort bestmöglich
-wiederhergestellt. Legacy-Profile nur mit EXE-Namen können weiterhin
-automatisch erkannt, aber nicht über diese Schaltfläche gestartet werden.
+bestätigt zuerst den Zielmodus und wählt danach eine klar ausgewiesene
+Startart. Dieser Start ist strikt optional und geschieht ausschließlich durch
+einen bewussten Klick auf diese Schaltfläche. Profilanlage, Tool-Autostart und
+die normale automatische Erkennung einer bereits vom Nutzer gestarteten
+Anwendung lösen niemals einen Spiel- oder Steam-Start aus. Liegt die Profil-EXE
+nachweislich unter
+`steamapps\common\<installdir>` und gehört im selben `steamapps`-Ordner ein
+lesbares `appmanifest_<App-ID>.acf` mit passendem Installationsordner dazu,
+wird **Steam** gewählt. Dabei öffnet das Tool ausschließlich
+`steam://run/<App-ID>` über den offiziellen Windows-Protokollhandler. Es wartet
+bis zu 120 Sekunden auf eine neue, eindeutig passende Instanz der exakten
+Profil-EXE und hält den Zielmodus währenddessen mit begrenzter Prüfrate aktiv.
+Der von Windows eventuell zurückgegebene Steam-Prozess wird nicht als Spiel
+überwacht.
+
+Ohne diesen belastbaren Manifestnachweis gilt **Direkt**. Das betrifft auch
+Spiele anderer Stores: Die Profil-EXE wird wie bisher unmittelbar gestartet
+und ihre von Windows gelieferte PID und Startzeit übernommen. Schlägt ein Start
+fehl oder läuft das Steam-Wartefenster ab, wird ein zuvor vom Tool geänderter
+Modus bestmöglich wiederhergestellt. Legacy-Profile nur mit EXE-Namen können
+weiterhin automatisch erkannt, aber nicht über diese Schaltfläche gestartet
+werden. Die Profilverwaltung zeigt für ein startbares ausgewähltes Profil
+`Startart nur beim Klick: Steam` oder `Startart nur beim Klick: Direkt` an.
 
 Die Überwachung prüft den Prozess regelmäßig. Ein fehlgeschlagener Wechsel wird
 mit Abstand erneut versucht, und eine spätere Abweichung vom Profilmodus wird
@@ -53,12 +72,19 @@ nicht gelöscht. Beschädigte oder ungültige Profildaten werden nicht
 - Es wird ausschließlich der Primärmonitor berücksichtigt.
 - Geschützte oder bereits beendete Prozesse können nicht als Profil verwendet
   werden.
-- Manche Spiele starten über einen Bootstrapper, Launcher oder DRM-Prozess, der
-  sofort endet und die eigentliche Spiel-EXE separat startet. Das Tool verfolgt
-  bewusst nur die von Windows eindeutig zurückgegebene Prozessinstanz und rät
-  keine beliebigen Folge- oder Kindprozesse. Für solche Spiele kann der
-  kontrollierte Start daher früh wiederherstellen; die automatische Erkennung
-  der tatsächlich profilierten Spiel-EXE bleibt die verlässlichere Variante.
+- Epic, GOG und sonstige Launcher werden derzeit nicht eigens erkannt. Sie
+  verwenden den Direktstart. Übergibt deren Bootstrapper den Start an einen
+  anderen Prozess, kann dieser nicht automatisch als gestartete Instanz
+  übernommen werden; die normale automatische Profilerkennung bleibt davon
+  unberührt. Eine universelle Launcher-Unterstützung wird nicht behauptet.
+- Zur möglichst risikoarmen Nutzung mit VAC und anderer Anti-Cheat-Software
+  beschränkt sich der Steam-Pfad auf den offiziellen Steam-URI, das Umschalten
+  des Windows-Anzeigemodus und eine ausschließlich lesende Beobachtung
+  öffentlicher Prozessmetadaten (Pfad, PID und Startzeit). Es gibt keine
+  Speicherzugriffe auf Spiele, DLL-Injektion, Hooks, Debugger, Remote Threads,
+  Eingabesimulation, Overlays oder Interaktion mit Anti-Cheat-Systemen. Steam-
+  und Spieldateien werden nicht verändert; Manifeste werden nur gelesen. Eine
+  absolute VAC- oder Anti-Cheat-Garantie kann das Tool dennoch nicht geben.
 - Das ursprüngliche Anzeigemodus wird nur dann beim Prozessende bzw. beim
   Beenden des Tools wiederhergestellt, wenn das Tool den Wechsel erfolgreich
   durchgeführt hat.

@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Text.RegularExpressions;
 
 namespace DisplayModeSwitcher;
 
@@ -19,7 +18,12 @@ public interface IProcessPresentationFileSystem
 public sealed class ProcessPresentationFileSystem : IProcessPresentationFileSystem
 {
     public IEnumerable<string> EnumerateFiles(string directory, string pattern) => Directory.EnumerateFiles(directory, pattern);
-    public string ReadAllText(string path) => File.ReadAllText(path);
+    public string ReadAllText(string path)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        using var reader = new StreamReader(stream, detectEncodingFromByteOrderMarks: true);
+        return reader.ReadToEnd();
+    }
 }
 
 public static class ProcessPresentation
@@ -80,28 +84,10 @@ public static class ProcessPresentation
 
     public static string? FindSteamGameName(string executablePath, IProcessPresentationFileSystem? fileSystem = null)
     {
-        fileSystem ??= new ProcessPresentationFileSystem();
-        try
-        {
-            var parent = Path.GetDirectoryName(executablePath);
-            if (string.IsNullOrWhiteSpace(parent)) return null;
-            var current = new DirectoryInfo(parent);
-            DirectoryInfo? install = null;
-            DirectoryInfo? steamApps = null;
-            while (current.Parent is not null)
-            {
-                if (string.Equals(current.Parent.Name, "common", StringComparison.OrdinalIgnoreCase) && current.Parent.Parent is { } candidate && string.Equals(candidate.Name, "steamapps", StringComparison.OrdinalIgnoreCase)) { install = current; steamApps = candidate; break; }
-                current = current.Parent;
-            }
-            if (install is null || steamApps is null) return null;
-            foreach (var manifest in fileSystem.EnumerateFiles(steamApps.FullName, "appmanifest_*.acf"))
-            {
-                var fields = ParseVdfFields(fileSystem.ReadAllText(manifest));
-                if (fields.TryGetValue("installdir", out var dir) && string.Equals(dir, install.Name, StringComparison.OrdinalIgnoreCase) && fields.TryGetValue("name", out var name) && !IsUnhelpfulName(name, Path.GetFileName(executablePath))) return Normalize(name);
-            }
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException) { }
-        return null;
+        var installation = SteamManifestCatalog.FindForExecutable(executablePath, fileSystem);
+        return installation is not null && !IsUnhelpfulName(installation.Name ?? string.Empty, Path.GetFileName(executablePath))
+            ? Normalize(installation.Name)
+            : null;
     }
 
     private static ProcessPresentationItem CreateItem(ProcessDisplayInfo process, IProcessPresentationFileSystem fileSystem)
@@ -134,13 +120,6 @@ public static class ProcessPresentation
         }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException) { }
         return null;
-    }
-
-    private static Dictionary<string, string> ParseVdfFields(string text)
-    {
-        var fields = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (Match match in Regex.Matches(text, "\\\"(?<key>[^\\\"]+)\\\"\\s*\\\"(?<value>(?:\\\\.|[^\\\"])*)\\\"")) fields.TryAdd(match.Groups["key"].Value, Regex.Unescape(match.Groups["value"].Value));
-        return fields;
     }
 
     private static string? Normalize(string? value) => string.IsNullOrWhiteSpace(value) ? null : string.Join(" ", value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));

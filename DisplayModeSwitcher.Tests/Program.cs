@@ -19,6 +19,9 @@ var tests = new (string Name, Action Run)[]
     ("Prozessliste filtert, dedupliziert und sortiert", ProcessListFiltersDeduplicatesAndSorts),
     ("Generische Metadaten fallen auf Fenstertitel zurück", GenericMetadataFallsBackToWindowTitle),
     ("Steam-Manifeste liefern Spielnamen robust", SteamManifestNamesAreResolved),
+    ("Startstrategie erkennt Steam nur mit passendem validen Manifest", SteamStrategyRequiresValidatedManifest),
+    ("Verschachtelte oder doppelte Manifestfelder werden nicht vertraut", SteamManifestRejectsAmbiguousFields),
+    ("Steam-Startinfo verwendet ausschließlich den offiziellen URI", SteamStartInfoUsesUriWithoutArguments),
     ("Installationsordner ist der letzte Namensfallback", InstallationFolderIsFallback),
     ("Windows-Hosts und eigene Instanzen werden gefiltert", WindowsHostsAndToolAreFiltered),
     ("Profilbearbeitung aktualisiert und verschiebt Profile", ProfileEditingUpdatesAndMovesProfile),
@@ -35,7 +38,16 @@ var tests = new (string Name, Action Run)[]
     ("Gestartete Prozessinstanz wird bis zum Ende überwacht", LaunchedProcessRestoresOriginalOnExit),
     ("Parallele Startaufrufe starten höchstens einmal", ParallelLaunchStartsOnce),
     ("Aktives Profil lehnt einen weiteren Start ab", ActiveProfileRejectsLaunch),
-    ("Legacy- und fehlende Profile starten ohne Seiteneffekt nicht", InvalidLaunchProfilesHaveNoSideEffects)
+    ("Legacy- und fehlende Profile starten ohne Seiteneffekt nicht", InvalidLaunchProfilesHaveNoSideEffects),
+    ("Steam-Start übernimmt nur den neuen exakten Zielprozess", SteamPendingAdoptsOnlyExactNewProcess),
+    ("Steam-Start prüft einen Zielprozess noch an der Timeout-Grenze", SteamPendingChecksBoundaryBeforeTimeout),
+    ("Steam-Shellprozess und alte oder falsche Prozesse werden ignoriert", SteamPendingIgnoresShellOldAndWrongProcesses),
+    ("Steam-Wartephase hält den Zielmodus rate-limited", SteamPendingKeepsTargetRateLimited),
+    ("Steam-Wartefenster ist strikt auf 120 Sekunden begrenzt", SteamPendingTimeoutIsBounded),
+    ("Steam-Timeout und Stop stellen den Originalmodus wieder her", SteamTimeoutAndStopRestoreOriginal),
+    ("Steam-Startfehler und dauerhafter Displayfehler rollen zurück", SteamFailuresRollBack),
+    ("Steam-Restorefehler bleibt zur Wiederholung verwaltet", SteamRestoreFailureRemainsManaged),
+    ("Parallele Steam-Starts lösen den URI höchstens einmal aus", ParallelSteamLaunchStartsOnce)
 };
 
 var failures = new List<string>();
@@ -188,13 +200,15 @@ static void DiagnosticBufferIsBounded()
 
 static void DiagnosticReportFormatsSnapshot()
 {
-    var status = new ProfileMonitorStatus(ProfileMonitorState.RetryPending, "Erneuter Versuch folgt.", @"C:\Games\game.exe", Mode(1280, 720, 60), DateTime.UnixEpoch, "Testfehler", 2);
+    var status = new ProfileMonitorStatus(ProfileMonitorState.RetryPending, "Erneuter Versuch folgt.", @"C:\Games\game.exe", Mode(1280, 720, 60), DateTime.UnixEpoch, "Testfehler", 2, LaunchStrategy.Direct);
     var report = DiagnosticReportFormatter.Format(new DiagnosticReportData(DateTime.UnixEpoch, "1.2.3", "Windows Test", "8.0", "X64", "1920x1080 @ 60Hz", status,
         [new ProfileMonitorDiagnosticEvent(DateTime.UnixEpoch, "Profilmodus konnte nicht angewendet werden.")]));
     True(report.Contains("App-Version: 1.2.3"));
     True(report.Contains("Zustand: Wiederholung ausstehend"));
+    True(report.Contains("Startart: Direkt"));
     True(report.Contains("Wiederholungen: 2"));
     True(report.Contains("Profilmodus konnte nicht angewendet werden."));
+    Equal("Wartet auf gestartete Anwendung", DiagnosticReportFormatter.DisplayState(ProfileMonitorState.PendingLaunch));
 }
 
 static void ProfileModeIsSetBeforeLaunch()
@@ -477,6 +491,229 @@ static void SteamManifestNamesAreResolved()
     });
 }
 
+static void SteamStrategyRequiresValidatedManifest()
+{
+    WithTemporaryDirectory(directory =>
+    {
+        var steamApps = Path.Combine(directory, "steamapps");
+        var executable = Path.Combine(steamApps, "common", "RideFolder", "Binaries", "Ride.exe");
+        Directory.CreateDirectory(Path.GetDirectoryName(executable)!);
+        var resolver = new SteamAwareLaunchPlanResolver();
+
+        var validManifest = Path.Combine(steamApps, "appmanifest_123456.acf");
+        File.WriteAllText(validManifest, "\"AppState\" { \"installdir\" \"ridefolder\" \"name\" \"Ride\" }");
+        var steam = resolver.Resolve(executable);
+        Equal(LaunchStrategy.Steam, steam.Strategy);
+        Equal("123456", steam.SteamAppId);
+        Equal("steam://run/123456", steam.SteamUri);
+        Equal(ProcessMatcher.CanonicalizePath(executable), steam.ExpectedExecutablePath);
+
+        File.WriteAllText(Path.Combine(steamApps, "appmanifest_654321.acf"), "\"AppState\" { \"installdir\" \"RideFolder\" }");
+        Equal(LaunchStrategy.Direct, resolver.Resolve(executable).Strategy);
+        File.Delete(Path.Combine(steamApps, "appmanifest_654321.acf"));
+
+        File.WriteAllText(validManifest, "\"AppState\" { \"installdir\" \"OtherFolder\" }");
+        Equal(LaunchStrategy.Direct, resolver.Resolve(executable).Strategy);
+
+        File.WriteAllText(validManifest, "\"AppState\" { \"installdir\" \"RideFolder\"");
+        Equal(LaunchStrategy.Direct, resolver.Resolve(executable).Strategy);
+
+        File.Delete(validManifest);
+        File.WriteAllText(Path.Combine(steamApps, "appmanifest_notnumeric.acf"), "\"AppState\" { \"installdir\" \"RideFolder\" }");
+        Equal(LaunchStrategy.Direct, resolver.Resolve(executable).Strategy);
+
+        var outside = Path.Combine(directory, "Games", "RideFolder", "Ride.exe");
+        Equal(LaunchStrategy.Direct, resolver.Resolve(outside).Strategy);
+    });
+}
+
+static void SteamStartInfoUsesUriWithoutArguments()
+{
+    var info = SteamLaunchInfo.Create("steam://run/123456");
+    Equal("steam://run/123456", info.FileName);
+    Equal(string.Empty, info.Arguments);
+    True(info.ArgumentList.Count == 0);
+    True(info.UseShellExecute);
+
+    var rejected = false;
+    try { SteamLaunchInfo.Create("steam://run/123 --unexpected"); }
+    catch (ArgumentException) { rejected = true; }
+    True(rejected);
+
+    rejected = false;
+    try { LaunchPlan.Steam(@"C:\Games\game.exe", "123/456"); }
+    catch (ArgumentException) { rejected = true; }
+    True(rejected);
+}
+
+static void SteamManifestRejectsAmbiguousFields()
+{
+    WithTemporaryDirectory(directory =>
+    {
+        var steamApps = Path.Combine(directory, "steamapps");
+        var executable = Path.Combine(steamApps, "common", "RideFolder", "Ride.exe");
+        Directory.CreateDirectory(Path.GetDirectoryName(executable)!);
+        var manifest = Path.Combine(steamApps, "appmanifest_123456.acf");
+        var resolver = new SteamAwareLaunchPlanResolver();
+
+        File.WriteAllText(manifest, "\"AppState\" { \"UserConfig\" { \"installdir\" \"RideFolder\" } }");
+        Equal(LaunchStrategy.Direct, resolver.Resolve(executable).Strategy);
+
+        File.WriteAllText(manifest, "\"AppState\" { \"installdir\" \"RideFolder\" \"installdir\" \"OtherFolder\" }");
+        Equal(LaunchStrategy.Direct, resolver.Resolve(executable).Strategy);
+    });
+}
+
+static void SteamPendingAdoptsOnlyExactNewProcess()
+{
+    var fixture = new SteamLaunchFixture();
+    var result = fixture.Monitor.LaunchProfileApplication(fixture.Path, fixture.Now);
+    True(result.Success, result.Error);
+    True(result.Process is null);
+    Equal(ProfileMonitorState.PendingLaunch, fixture.Monitor.Status.State);
+    Equal(0, fixture.Launcher.LaunchCount);
+    Equal(1, fixture.Launcher.SteamLaunchCount);
+
+    var target = new ProcessIdentity(77, fixture.Now.AddSeconds(1), fixture.Path);
+    fixture.Processes.Items = [target];
+    fixture.Monitor.Poll(fixture.Now.AddSeconds(1));
+    Equal(ProfileMonitorState.Active, fixture.Monitor.Status.State);
+    True(fixture.Monitor.Status.LastResult?.Contains("PID 77", StringComparison.Ordinal) == true);
+
+    fixture.Processes.Items = Array.Empty<ProcessIdentity>();
+    fixture.Monitor.Poll(fixture.Now.AddSeconds(6));
+    Equal(fixture.Original, fixture.Display.Current);
+}
+
+static void SteamPendingChecksBoundaryBeforeTimeout()
+{
+    var fixture = new SteamLaunchFixture(pendingTimeout: TimeSpan.FromSeconds(10));
+    True(fixture.Monitor.LaunchProfileApplication(fixture.Path, fixture.Now).Success);
+    fixture.Processes.Items = [new ProcessIdentity(78, fixture.Now.AddSeconds(9), fixture.Path)];
+
+    fixture.Monitor.Poll(fixture.Now.AddSeconds(10));
+
+    Equal(ProfileMonitorState.Active, fixture.Monitor.Status.State);
+    True(fixture.Monitor.Status.LastResult?.Contains("PID 78", StringComparison.Ordinal) == true);
+}
+
+static void SteamPendingIgnoresShellOldAndWrongProcesses()
+{
+    var fixture = new SteamLaunchFixture();
+    True(fixture.Monitor.LaunchProfileApplication(fixture.Path, fixture.Now).Success);
+    fixture.Processes.Items =
+    [
+        new ProcessIdentity(1, fixture.Now, ProcessMatcher.CanonicalizePath(@"C:\Program Files (x86)\Steam\steam.exe")),
+        new ProcessIdentity(2, fixture.Now.AddSeconds(1), ProcessMatcher.CanonicalizePath(@"C:\Other\Ride.exe")),
+        new ProcessIdentity(3, fixture.Now.AddMinutes(-1), fixture.Path)
+    ];
+
+    fixture.Monitor.Poll(fixture.Now.AddSeconds(1));
+    Equal(ProfileMonitorState.PendingLaunch, fixture.Monitor.Status.State);
+    True(fixture.Monitor.Status.LastResult?.Contains("Wartet", StringComparison.Ordinal) == true);
+}
+
+static void SteamPendingKeepsTargetRateLimited()
+{
+    var fixture = new SteamLaunchFixture();
+    True(fixture.Monitor.LaunchProfileApplication(fixture.Path, fixture.Now).Success);
+    Equal(1, fixture.Display.SetCalls.Count);
+    fixture.Display.Current = fixture.Original;
+
+    fixture.Monitor.Poll(fixture.Now);
+    Equal(2, fixture.Display.SetCalls.Count);
+    Equal(fixture.Target, fixture.Display.Current);
+    fixture.Display.Current = fixture.Original;
+    fixture.Monitor.Poll(fixture.Now.AddSeconds(1));
+    Equal(2, fixture.Display.SetCalls.Count);
+    fixture.Monitor.Poll(fixture.Now.AddSeconds(5));
+    Equal(3, fixture.Display.SetCalls.Count);
+}
+
+static void SteamPendingTimeoutIsBounded()
+{
+    var rejected = false;
+    try { _ = new SteamLaunchFixture(pendingTimeout: TimeSpan.FromSeconds(121)); }
+    catch (ArgumentOutOfRangeException) { rejected = true; }
+    True(rejected);
+}
+
+static void SteamTimeoutAndStopRestoreOriginal()
+{
+    var timeout = new SteamLaunchFixture(pendingTimeout: TimeSpan.FromSeconds(10));
+    True(timeout.Monitor.LaunchProfileApplication(timeout.Path, timeout.Now).Success);
+    timeout.Monitor.Poll(timeout.Now.AddSeconds(10));
+    Equal(timeout.Original, timeout.Display.Current);
+    Equal(ProfileMonitorState.Idle, timeout.Monitor.Status.State);
+    True(timeout.Monitor.DiagnosticEvents.Any(item => item.Message.Contains("Zeitüberschreitung", StringComparison.Ordinal)));
+
+    var stopped = new SteamLaunchFixture();
+    True(stopped.Monitor.LaunchProfileApplication(stopped.Path, stopped.Now).Success);
+    True(stopped.Monitor.Stop().Success);
+    Equal(stopped.Original, stopped.Display.Current);
+    Equal(ProfileMonitorState.Stopped, stopped.Monitor.Status.State);
+}
+
+static void SteamFailuresRollBack()
+{
+    var startFailure = new SteamLaunchFixture();
+    startFailure.Launcher.SteamError = "URI kaputt";
+    var startResult = startFailure.Monitor.LaunchProfileApplication(startFailure.Path, startFailure.Now);
+    True(!startResult.Success);
+    Equal("URI kaputt", startResult.StartError);
+    Equal(startFailure.Original, startFailure.Display.Current);
+
+    var displayFailure = new SteamLaunchFixture();
+    True(displayFailure.Monitor.LaunchProfileApplication(displayFailure.Path, displayFailure.Now).Success);
+    displayFailure.Display.Current = displayFailure.Original;
+    displayFailure.Display.Results.Enqueue(OperationResult.Fail("Anzeige kaputt"));
+    displayFailure.Display.Results.Enqueue(OperationResult.Fail("Anzeige kaputt"));
+    displayFailure.Display.Results.Enqueue(OperationResult.Fail("Anzeige kaputt"));
+    displayFailure.Monitor.Poll(displayFailure.Now);
+    displayFailure.Monitor.Poll(displayFailure.Now.AddSeconds(5));
+    displayFailure.Monitor.Poll(displayFailure.Now.AddSeconds(10));
+    Equal(displayFailure.Original, displayFailure.Display.Current);
+    Equal(ProfileMonitorState.Idle, displayFailure.Monitor.Status.State);
+    True(displayFailure.Monitor.DiagnosticEvents.Any(item => item.Message.Contains("dauerhaft", StringComparison.Ordinal)));
+}
+
+static void SteamRestoreFailureRemainsManaged()
+{
+    var fixture = new SteamLaunchFixture(pendingTimeout: TimeSpan.FromSeconds(10));
+    fixture.Display.Results.Enqueue(OperationResult.Ok());
+    fixture.Display.Results.Enqueue(OperationResult.Fail("Restore kaputt"));
+    True(fixture.Monitor.LaunchProfileApplication(fixture.Path, fixture.Now).Success);
+    fixture.Monitor.Poll(fixture.Now.AddSeconds(10));
+    Equal(ProfileMonitorState.Restoring, fixture.Monitor.Status.State);
+
+    fixture.Display.Results.Enqueue(OperationResult.Ok());
+    fixture.Monitor.Poll(fixture.Now.AddSeconds(15));
+    Equal(fixture.Original, fixture.Display.Current);
+    Equal(ProfileMonitorState.Idle, fixture.Monitor.Status.State);
+
+    var stopped = new SteamLaunchFixture();
+    stopped.Display.Results.Enqueue(OperationResult.Ok());
+    stopped.Display.Results.Enqueue(OperationResult.Fail("Restore beim Stop kaputt"));
+    True(stopped.Monitor.LaunchProfileApplication(stopped.Path, stopped.Now).Success);
+    var beforeStop = DateTime.UtcNow;
+    True(!stopped.Monitor.Stop().Success);
+    Equal(ProfileMonitorState.Restoring, stopped.Monitor.Status.State);
+    stopped.Display.Results.Enqueue(OperationResult.Ok());
+    stopped.Monitor.Poll(beforeStop.AddSeconds(10));
+    Equal(stopped.Original, stopped.Display.Current);
+    Equal(ProfileMonitorState.Stopped, stopped.Monitor.Status.State);
+}
+
+static void ParallelSteamLaunchStartsOnce()
+{
+    var fixture = new SteamLaunchFixture();
+    var first = Task.Run(() => fixture.Monitor.LaunchProfileApplication(fixture.Path, fixture.Now));
+    var second = Task.Run(() => fixture.Monitor.LaunchProfileApplication(fixture.Path, fixture.Now));
+    Task.WaitAll(first, second);
+    Equal(1, fixture.Launcher.SteamLaunchCount);
+    Equal(1, new[] { first.Result, second.Result }.Count(result => result.Success));
+}
+
 static void InstallationFolderIsFallback()
 {
     Equal("My Game", ProcessPresentation.GetFriendlyName("game.exe", "BootstrapPackagedGame", ".NET", null, null, "My Game"));
@@ -643,6 +880,43 @@ sealed class LaunchFixture
     };
 }
 
+sealed class SteamLaunchFixture
+{
+    public DateTime Now { get; } = new(2026, 9, 13, 10, 0, 0, DateTimeKind.Utc);
+    public string Path { get; } = ProcessMatcher.CanonicalizePath(@"C:\SteamLibrary\steamapps\common\RideFolder\Ride.exe");
+    public DisplayMode Original { get; } = CreateMode(1920, 1080, 60);
+    public DisplayMode Target { get; } = CreateMode(1280, 720, 60);
+    public FakeDisplay Display { get; }
+    public FakeProcesses Processes { get; } = new();
+    public FakeLauncher Launcher { get; }
+    public ProfileMonitor Monitor { get; }
+
+    public SteamLaunchFixture(TimeSpan? pendingTimeout = null)
+    {
+        Display = new FakeDisplay { Current = Original };
+        Launcher = new FakeLauncher(new ProcessIdentity(900, Now, @"C:\Program Files (x86)\Steam\steam.exe"));
+        var profiles = new ConcurrentDictionary<string, DisplayMode>(StringComparer.OrdinalIgnoreCase) { [Path] = Target };
+        Monitor = new ProfileMonitor(
+            profiles,
+            Display,
+            Processes,
+            TimeSpan.FromSeconds(5),
+            TimeSpan.FromSeconds(5),
+            Launcher,
+            _ => true,
+            new FakeLaunchPlanResolver(LaunchPlan.Steam(Path, "123456")),
+            pendingTimeout ?? TimeSpan.FromSeconds(120));
+    }
+
+    private static DisplayMode CreateMode(uint width, uint height, uint frequency) => new()
+    {
+        Width = width,
+        Height = height,
+        Frequency = frequency,
+        Label = $"{width}x{height} @ {frequency}Hz"
+    };
+}
+
 sealed class FakeDisplay : IDisplayService
 {
     public DisplayMode? Current { get; set; }
@@ -665,6 +939,9 @@ sealed class FakeLauncher(ProcessIdentity identity) : IApplicationLauncher
     public ProcessIdentity Identity { get; set; } = identity;
     public string? Error { get; set; }
     public int LaunchCount { get; private set; }
+    public int SteamLaunchCount { get; private set; }
+    public string? SteamError { get; set; }
+    public string? LastSteamUri { get; private set; }
     public Action<string>? OnLaunch { get; set; }
     public FakeLaunchedApplication? LastHandle { get; private set; }
 
@@ -675,6 +952,18 @@ sealed class FakeLauncher(ProcessIdentity identity) : IApplicationLauncher
         if (Error is not null) throw new InvalidOperationException(Error);
         return LastHandle = new FakeLaunchedApplication(Identity);
     }
+
+    public void LaunchSteam(string steamUri)
+    {
+        SteamLaunchCount++;
+        LastSteamUri = steamUri;
+        if (SteamError is not null) throw new InvalidOperationException(SteamError);
+    }
+}
+
+sealed class FakeLaunchPlanResolver(LaunchPlan plan) : ILaunchPlanResolver
+{
+    public LaunchPlan Resolve(string executablePath) => plan;
 }
 
 sealed class FakeLaunchedApplication(ProcessIdentity identity) : ILaunchedApplication

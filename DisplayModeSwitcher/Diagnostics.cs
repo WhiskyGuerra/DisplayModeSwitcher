@@ -60,6 +60,7 @@ public static class DiagnosticReportFormatter
             $"Zustand: {DisplayState(data.MonitorStatus.State)}",
             $"Meldung: {data.MonitorStatus.Message}",
             $"Profil: {data.MonitorStatus.ProfileProcess ?? "–"}",
+            $"Startart: {FormatLaunchStrategy(data.MonitorStatus.LaunchStrategy)}",
             $"Zielmodus: {FormatMode(data.MonitorStatus.TargetMode)}",
             $"Letzte Änderung (UTC): {FormatTime(data.MonitorStatus.LastChangedUtc)}",
             $"Letztes Ergebnis: {data.MonitorStatus.LastResult ?? "–"}",
@@ -89,6 +90,7 @@ public static class DiagnosticReportFormatter
     {
         ProfileMonitorState.Idle => "Wartet",
         ProfileMonitorState.Launching => "Start wird vorbereitet",
+        ProfileMonitorState.PendingLaunch => "Wartet auf gestartete Anwendung",
         ProfileMonitorState.Active => "Aktiv",
         ProfileMonitorState.RetryPending => "Wiederholung ausstehend",
         ProfileMonitorState.Restoring => "Wiederherstellung",
@@ -96,6 +98,13 @@ public static class DiagnosticReportFormatter
         ProfileMonitorState.Error => "Fehler",
         ProfileMonitorState.Stopped => "Gestoppt",
         _ => state.ToString()
+    };
+
+    public static string FormatLaunchStrategy(LaunchStrategy? strategy) => strategy switch
+    {
+        LaunchStrategy.Steam => "Steam",
+        LaunchStrategy.Direct => "Direkt",
+        _ => "–"
     };
 
     private static string FormatTime(DateTime? value) => value is null ? "–" : value.Value.ToUniversalTime().ToString("O");

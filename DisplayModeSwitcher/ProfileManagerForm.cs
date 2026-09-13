@@ -21,7 +21,9 @@ namespace DisplayModeSwitcher
         private readonly IProcessProvider _processProvider;
         private readonly CheckBox _showAllProcesses;
         private readonly Label _editStateLabel;
+        private readonly Label _launchTypeLabel;
         private int _processLoadVersion;
+        private int _launchTypeLoadVersion;
         private bool _isClosing;
         private bool _launchInProgress;
         private string? _editingProcessKey;
@@ -58,9 +60,10 @@ namespace DisplayModeSwitcher
             _removeButton = new Button { Text = "Entfernen", Left = 335, Top = 70, Width = 100 };
             _launchButton = new Button { Text = "Im Profilmodus starten", Left = 445, Top = 70, Width = 185, Enabled = false };
             _editStateLabel = new Label { Text = "Neues Profil", Left = 10, Top = 103, AutoSize = true };
+            _launchTypeLabel = new Label { Text = "Startart nur beim Klick: –", Left = 445, Top = 105, AutoSize = true };
             _profileList = new ListBox { Left = 10, Top = 128, Width = 620, Height = 225, HorizontalScrollbar = true };
 
-            Controls.AddRange(new Control[] { _processBox, _modeBox, _showAllProcesses, _browseButton, _addButton, _newButton, _removeButton, _launchButton, _editStateLabel, _profileList });
+            Controls.AddRange(new Control[] { _processBox, _modeBox, _showAllProcesses, _browseButton, _addButton, _newButton, _removeButton, _launchButton, _editStateLabel, _launchTypeLabel, _profileList });
 
             Load += ProfileManagerForm_Load;
             _addButton.Click += OnAdd;
@@ -72,7 +75,7 @@ namespace DisplayModeSwitcher
             _profileList.DoubleClick += (_, _) => BeginEditingSelectedProfile();
             _processBox.SelectedIndexChanged += (_, _) => _preferredProcessPath = (_processBox.SelectedItem as ProcessPresentationItem)?.Path;
             _showAllProcesses.CheckedChanged += (_, _) => RefreshProcesses();
-            FormClosing += (_, _) => { _isClosing = true; _processLoadVersion++; };
+            FormClosing += (_, _) => { _isClosing = true; _processLoadVersion++; _launchTypeLoadVersion++; };
         }
 
         private void ProfileManagerForm_Load(object? sender, EventArgs e)
@@ -139,6 +142,8 @@ namespace DisplayModeSwitcher
 
         private void RefreshProfileList()
         {
+            _launchTypeLoadVersion++;
+            _launchTypeLabel.Text = "Startart nur beim Klick: –";
             _profileList.Items.Clear();
             foreach (var kvp in _store.Profiles)
             {
@@ -201,6 +206,7 @@ namespace DisplayModeSwitcher
             SelectProcessPath(item.ProcessKey);
             SelectMode(item.Mode);
             UpdateLaunchButton();
+            RefreshLaunchType(item);
         }
 
         private void StartNewProfile()
@@ -209,6 +215,8 @@ namespace DisplayModeSwitcher
             _editStateLabel.Text = "Neues Profil";
             _addButton.Text = "Profil speichern";
             _profileList.ClearSelected();
+            _launchTypeLoadVersion++;
+            _launchTypeLabel.Text = "Startart nur beim Klick: –";
             UpdateLaunchButton();
         }
 
@@ -243,6 +251,30 @@ namespace DisplayModeSwitcher
             var item = _profileList.SelectedItem as ProfileListItem;
             _launchButton.Enabled = !_launchInProgress && item is not null &&
                 Path.IsPathFullyQualified(item.ProcessKey) && !item.IsMissingExecutable;
+        }
+
+        private async void RefreshLaunchType(ProfileListItem item)
+        {
+            var loadVersion = ++_launchTypeLoadVersion;
+            if (!Path.IsPathFullyQualified(item.ProcessKey) || item.IsMissingExecutable)
+            {
+                _launchTypeLabel.Text = "Startart nur beim Klick: –";
+                return;
+            }
+
+            _launchTypeLabel.Text = "Startart beim Klick wird erkannt…";
+            try
+            {
+                var plan = await _profileManager.ResolveLaunchPlanAsync(item.ProcessKey);
+                if (_isClosing || IsDisposed || loadVersion != _launchTypeLoadVersion)
+                    return;
+                _launchTypeLabel.Text = $"Startart nur beim Klick: {plan.DisplayName}";
+            }
+            catch
+            {
+                if (!_isClosing && !IsDisposed && loadVersion == _launchTypeLoadVersion)
+                    _launchTypeLabel.Text = "Startart nur beim Klick: Direkt";
+            }
         }
 
         private void SelectProcessPath(string path)
