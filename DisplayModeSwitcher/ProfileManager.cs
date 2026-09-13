@@ -157,12 +157,30 @@ public sealed record ProfileMonitorStatus(
     int RetryCount = 0,
     LaunchStrategy? LaunchStrategy = null,
     ProfileRetentionPolicy? Policy = null,
-    int ReapplyCount = 0)
+    int ReapplyCount = 0,
+    IReadOnlyList<ProfileMonitorTargetStatus>? Targets = null,
+    bool ExternallyDetected = false)
 {
     public static ProfileMonitorStatus Idle { get; } = new(ProfileMonitorState.Idle, "Wartet auf einen Profilprozess.");
 }
 
-public sealed class ProfileMonitor
+/// <summary>Snapshot eines konkreten, bereits aufgelösten Profilziels. Der Pfad
+/// ist Diagnoseinformation und wird hier niemals erneut auf einen Monitor gebunden.</summary>
+public sealed record ProfileMonitorTargetStatus(
+    string? MonitorDevicePath,
+    string Selector,
+    DisplayMode Target,
+    DisplayMode? Original,
+    bool ToolChanged,
+    string? ApplyError = null,
+    string? RestoreError = null);
+
+/// <summary>
+/// Legacy global-primary monitor retained only for the pre-targeted regression
+/// seam. Production <see cref="ProfileManager"/> constructs
+/// <see cref="TargetedProfileMonitor"/> exclusively.
+/// </summary>
+internal sealed class ProfileMonitor
 {
     private static readonly TimeSpan MaximumPendingLaunchTimeout = TimeSpan.FromSeconds(120);
     private static readonly TimeSpan StartupStabilizationWindow = TimeSpan.FromSeconds(30);
@@ -1004,9 +1022,460 @@ public sealed class ProfileMonitor
     private void AddEvent(DateTime utcNow, string message) => _events.Add(utcNow, message);
 }
 
+/// <summary>
+/// Target-aware runtime used by the production manager.  It deliberately never
+/// reads or writes the implicit primary display: every change goes through a
+/// receipt-bearing targeted transaction.
+/// </summary>
+public sealed class TargetedProfileMonitor
+{
+    private static readonly TimeSpan StartupWindow = TimeSpan.FromSeconds(30);
+    private const int MaximumStartupReapplies = 3;
+    private readonly ConcurrentDictionary<string, DisplayProfile> _profiles;
+    private readonly ITargetedDisplayService _display;
+    private readonly IProcessProvider _processes;
+    private readonly IApplicationLauncher _launcher;
+    private readonly ILaunchPlanResolver _launchPlans;
+    private readonly Func<string, bool> _fileExists;
+    private readonly TimeSpan _retryInterval;
+    private readonly TimeSpan _verificationInterval;
+    private readonly TimeSpan _pendingLaunchTimeout;
+    private readonly SemaphoreSlim _operationGate = new(1, 1);
+    private readonly DiagnosticEventBuffer _events = new();
+    private Active? _active;
+    private DateTime _nextActionUtc;
+    private int _retryCount;
+    private bool _stopped;
+    private bool _stopRequested;
+    private ProfileMonitorStatus _status = ProfileMonitorStatus.Idle;
+
+    private sealed class Active
+    {
+        public required string ProfileProcess { get; init; }
+        public required DisplayProfile Profile { get; init; }
+        public required LaunchPlan LaunchPlan { get; init; }
+        public ProcessIdentity? Process { get; set; }
+        public DateTime? LaunchRequestedUtc { get; set; }
+        public DateTime? PendingUntilUtc { get; set; }
+        public DateTime? ActivatedUtc { get; set; }
+        public int ReapplyCount { get; set; }
+        public int PendingFailures { get; set; }
+        public bool ProcessExited { get; set; }
+        public bool RestoreInitialAfterDebts { get; set; }
+        public bool InitialApplied { get; set; }
+        public IReadOnlyList<TargetedDisplayReceipt> InitialReceipts { get; set; } = [];
+        public IReadOnlyList<DisplayRestoreDebt> RestoreDebts { get; set; } = [];
+        public IReadOnlyList<TargetedDisplayError> LastApplyErrors { get; set; } = [];
+        public bool ExternallyDetected { get; init; }
+    }
+
+    public TargetedProfileMonitor(
+        ConcurrentDictionary<string, DisplayProfile> profiles,
+        ITargetedDisplayService display,
+        IProcessProvider processes,
+        TimeSpan? retryInterval = null,
+        TimeSpan? verificationInterval = null,
+        IApplicationLauncher? launcher = null,
+        Func<string, bool>? fileExists = null,
+        ILaunchPlanResolver? launchPlans = null,
+        TimeSpan? pendingLaunchTimeout = null)
+    {
+        _profiles = profiles ?? throw new ArgumentNullException(nameof(profiles));
+        _display = display ?? throw new ArgumentNullException(nameof(display));
+        _processes = processes ?? throw new ArgumentNullException(nameof(processes));
+        _launcher = launcher ?? new SystemApplicationLauncher();
+        _launchPlans = launchPlans ?? new SteamAwareLaunchPlanResolver();
+        _fileExists = fileExists ?? File.Exists;
+        _retryInterval = retryInterval ?? TimeSpan.FromSeconds(5);
+        _verificationInterval = verificationInterval ?? TimeSpan.FromSeconds(1);
+        _pendingLaunchTimeout = pendingLaunchTimeout ?? TimeSpan.FromSeconds(120);
+        if (_retryInterval <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(retryInterval));
+        if (_verificationInterval <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(verificationInterval));
+        if (_pendingLaunchTimeout <= TimeSpan.Zero || _pendingLaunchTimeout > TimeSpan.FromSeconds(120))
+            throw new ArgumentOutOfRangeException(nameof(pendingLaunchTimeout), "Das Steam-Wartefenster muss größer als null und darf höchstens 120 Sekunden lang sein.");
+    }
+
+    public ProfileMonitorStatus Status => Volatile.Read(ref _status);
+    public IReadOnlyList<ProfileMonitorDiagnosticEvent> DiagnosticEvents => _events.Snapshot();
+    public LaunchPlan ResolveLaunchPlan(string executablePath) => _launchPlans.Resolve(executablePath);
+
+    public void Start(DateTime utcNow)
+    {
+        _operationGate.Wait();
+        try
+        {
+            // Never discard receipt/debt ownership if Start is called again while
+            // an activation or restoration is still managed.
+            if (_active is not null) return;
+            _stopped = false; _stopRequested = false; _active = null; _retryCount = 0;
+            SetStatus(ProfileMonitorState.Idle, "Wartet auf einen Profilprozess.", null, null, null, utcNow);
+            AddEvent(utcNow, "Profilüberwachung gestartet (gezielte Monitorziele).");
+        }
+        finally { _operationGate.Release(); }
+    }
+
+    public ProfileLaunchResult LaunchProfileApplication(string profileProcess, DateTime utcNow)
+    {
+        if (string.IsNullOrWhiteSpace(profileProcess) || !Path.IsPathFullyQualified(profileProcess))
+            return ProfileLaunchResult.Failed("Legacy-Profile ohne vollständigen EXE-Pfad können nicht gestartet werden.");
+        string path;
+        try { path = ProcessMatcher.CanonicalizePath(profileProcess); }
+        catch (Exception ex) { return ProfileLaunchResult.Failed($"Der Profilpfad ist ungültig: {ex.Message}"); }
+
+        _operationGate.Wait();
+        try
+        {
+            if (_stopped) return ProfileLaunchResult.Failed("Die Profilüberwachung wurde bereits beendet.");
+            if (_retryCount > 0 && utcNow < _nextActionUtc)
+                return ProfileLaunchResult.Failed("Der letzte Displayversuch ist fehlgeschlagen; der nächste Versuch ist noch nicht freigegeben.");
+            if (!_profiles.TryGetValue(path, out var profile)) return ProfileLaunchResult.Failed("Das ausgewählte Profil ist nicht mehr vorhanden.");
+            if (!_fileExists(path)) return ProfileLaunchResult.Failed("Die EXE-Datei des ausgewählten Profils wurde nicht gefunden.");
+            if (_active is not null) return ProfileLaunchResult.Failed("Es ist bereits ein Profil aktiv oder wird wiederhergestellt.");
+            try
+            {
+                if (_profiles.Any(item => ProcessMatcher.FindMatches(item.Key, _processes.GetCurrentSessionProcesses()).Count > 0))
+                    return ProfileLaunchResult.Failed("Es läuft bereits eine Anwendung mit Profil. Beenden Sie diese zuerst.");
+            }
+            catch (Exception ex) { return ProfileLaunchResult.Failed($"Laufende Profilprozesse konnten nicht geprüft werden: {ex.Message}"); }
+
+            var plan = SafePlan(path);
+            SetStatus(ProfileMonitorState.Launching, $"Profilziele für '{path}' werden vorbereitet.", path, PrimaryMode(profile), null, utcNow, plan.Strategy, profile.Policy);
+            var apply = Apply(profile.Targets);
+            if (!apply.Success)
+            {
+                var error = DescribeErrors(apply.Errors);
+                if (apply.RestoreDebts.Count > 0)
+                    QueueRestoreOnly(path, profile, plan, apply, utcNow);
+                else
+                {
+                    _retryCount++;
+                    _nextActionUtc = utcNow + _retryInterval;
+                    SetStatus(ProfileMonitorState.Error, $"Profilziele konnten nicht angewendet werden: {error}", path, PrimaryMode(profile), error, utcNow, plan.Strategy, profile.Policy, apply.Errors);
+                }
+                AddEvent(utcNow, $"Profilstart abgelehnt; Ziel-Batch fehlgeschlagen: {error}");
+                return ProfileLaunchResult.Failed($"Profilziele konnten nicht angewendet werden: {error}", displayError: error,
+                    rollbackError: apply.RestoreDebts.Count == 0 ? null : DescribeDebts(apply.RestoreDebts), displayModeChanged: apply.Receipts.Any(item => item.ToolChanged));
+            }
+
+            var active = NewActive(path, profile, plan, apply, null);
+            _retryCount = 0;
+            _active = active;
+            return plan.Strategy == LaunchStrategy.Steam
+                ? StartSteam(active, utcNow)
+                : StartDirect(active, utcNow);
+        }
+        finally { _operationGate.Release(); }
+    }
+
+    public void Poll(DateTime utcNow)
+    {
+        _operationGate.Wait();
+        try
+        {
+            if (_stopped || utcNow < _nextActionUtc) return;
+            if (_active is null) { TryActivate(utcNow); return; }
+            if (_active.RestoreDebts.Count > 0 || _active.ProcessExited) { TryRestore(utcNow); return; }
+            var running = _processes.GetCurrentSessionProcesses();
+            if (IsPending(_active)) { PollPending(running, utcNow); return; }
+            if (_active.Process is null || !Contains(running, _active.Process))
+            {
+                _active.ProcessExited = true;
+                AddEvent(utcNow, $"Profilprozess beendet: {_active.ProfileProcess}.");
+                TryRestore(utcNow); return;
+            }
+            EnsureTargets(utcNow, pending: false);
+        }
+        catch (Exception ex)
+        {
+            _nextActionUtc = utcNow + _retryInterval; _retryCount++;
+            SetStatus(ProfileMonitorState.Error, $"Profilüberwachung fehlgeschlagen: {ex.Message}", _active?.ProfileProcess, _active is null ? null : PrimaryMode(_active.Profile), ex.Message, utcNow, _active?.LaunchPlan.Strategy);
+        }
+        finally { _operationGate.Release(); }
+    }
+
+    public OperationResult Stop()
+    {
+        _operationGate.Wait();
+        try
+        {
+            _stopRequested = true;
+            if (_active is null) { SetStopped(DateTime.UtcNow); return OperationResult.Ok(); }
+            _active.ProcessExited = true;
+            return TryRestore(DateTime.UtcNow);
+        }
+        finally { _operationGate.Release(); }
+    }
+
+    private void TryActivate(DateTime utcNow)
+    {
+        IReadOnlyList<ProcessIdentity> running;
+        try { running = _processes.GetCurrentSessionProcesses(); }
+        catch (Exception ex) { _nextActionUtc = utcNow + _retryInterval; SetStatus(ProfileMonitorState.Error, $"Profilprozesse konnten nicht gelesen werden: {ex.Message}", null, null, ex.Message, utcNow); return; }
+        var candidates = _profiles.Select(item => (item.Key, item.Value, Matches: ProcessMatcher.FindMatches(item.Key, running)))
+            .Where(item => item.Matches.Count > 0).ToArray();
+        if (candidates.Length == 0) { SetStatus(ProfileMonitorState.Idle, "Wartet auf einen Profilprozess.", null, null, null, utcNow); return; }
+        if (candidates.Length != 1 || candidates[0].Matches.Count != 1)
+        { SetStatus(ProfileMonitorState.Ambiguous, "Mehrere Profile oder Prozesse sind gleichzeitig aktiv; es wird nicht geschaltet.", null, null, null, utcNow); return; }
+        var item = candidates[0];
+        var plan = LaunchPlan.Direct(item.Key);
+        var active = NewActive(item.Key, item.Value, plan, null, item.Matches[0]);
+        _active = active;
+        AddEvent(utcNow, $"Profilprozess erkannt: {item.Key}; Ziel-Batch wird vor dem Aktivieren geprüft.");
+        EnsureTargets(utcNow, pending: false);
+    }
+
+    private void EnsureTargets(DateTime utcNow, bool pending)
+    {
+        var active = _active!;
+        if (active.RestoreDebts.Count > 0) { TryRestore(utcNow); return; }
+        var reapply = active.InitialApplied;
+        if (reapply && !MayReapply(active, utcNow, pending, out var reason))
+        {
+            _nextActionUtc = utcNow + _verificationInterval;
+            SetStatus(pending ? ProfileMonitorState.PendingLaunch : ProfileMonitorState.Active, "Profil bleibt aktiv; Ziel-Batch wird gemäß Richtlinie nicht nachgesetzt.", active.ProfileProcess, PrimaryMode(active.Profile), reason, utcNow, active.LaunchPlan.Strategy);
+            return;
+        }
+        if (reapply && !pending) active.ReapplyCount++;
+        // Once resolved, even an originally dynamic PrimaryMonitor selector is
+        // pinned to its concrete physical path. A disconnect must fail instead
+        // of silently rebinding a later apply to another monitor.
+        var result = Apply(reapply ? CreateBoundTargets(active) : active.Profile.Targets);
+        active.LastApplyErrors = result.Errors;
+        if (result.Success)
+        {
+            if (!active.InitialApplied)
+            {
+                // Only the first successful batch owns restoration. Reapply receipts
+                // intentionally never replace these originals.
+                active.InitialReceipts = CloneReceipts(result.Receipts);
+                active.InitialApplied = true;
+                active.ActivatedUtc ??= utcNow;
+            }
+            else
+            {
+                // A later batch may be the first one that actually writes a
+                // target. Preserve its initial original mode, but remember that
+                // this target now requires restoration.
+                MarkInitialReceiptsChanged(active, result.Receipts.Where(item => item.ToolChanged));
+            }
+            _retryCount = 0; active.PendingFailures = 0; _nextActionUtc = utcNow + _verificationInterval;
+            SetStatus(pending ? ProfileMonitorState.PendingLaunch : ProfileMonitorState.Active,
+                pending ? "Steam-Start wartet auf den Zielprozess; Ziel-Batch ist aktiv." : $"Profilziele für '{active.ProfileProcess}' sind aktiv.",
+                active.ProfileProcess, PrimaryMode(active.Profile), reapply ? "Ziel-Batch nachgesetzt" : "Ziel-Batch angewendet", utcNow, active.LaunchPlan.Strategy);
+            if (reapply && result.Receipts.Any(item => item.ToolChanged))
+                AddEvent(utcNow, $"Abweichende Profilziele nachgesetzt ({FormatReapplies(active)}).");
+            return;
+        }
+        var error = DescribeErrors(result.Errors);
+        if (result.RestoreDebts.Count > 0)
+        {
+            // A failed reapply may have written a target whose first successful
+            // receipt was initially equivalent. Once its rollback debt clears,
+            // that target still belongs to the initial restore set.
+            if (active.InitialApplied)
+                MarkInitialReceiptsChanged(active, result.RestoreDebts.Select(item => item.Receipt));
+            active.RestoreDebts = CloneDebts(result.RestoreDebts);
+            active.RestoreInitialAfterDebts = active.InitialApplied;
+            active.ProcessExited = true; // debt has priority over every future apply/launch
+            AddEvent(utcNow, $"Ziel-Batch fehlgeschlagen; Teilrollback hinterließ Wiederherstellungsschulden: {DescribeDebts(active.RestoreDebts)}.");
+            TryRestore(utcNow); return;
+        }
+        _retryCount++; if (pending) active.PendingFailures++;
+        if (pending && active.PendingFailures >= 3) { active.ProcessExited = true; AddEvent(utcNow, "Steam-Wartephase wegen drei Displayfehlern abgebrochen."); TryRestore(utcNow); return; }
+        _nextActionUtc = utcNow + _retryInterval;
+        SetStatus(pending ? ProfileMonitorState.PendingLaunch : ProfileMonitorState.RetryPending,
+            $"Ziel-Batch konnte nicht angewendet werden: {error} Neuer Versuch folgt.", active.ProfileProcess, PrimaryMode(active.Profile), error, utcNow, active.LaunchPlan.Strategy, active.Profile.Policy, result.Errors);
+    }
+
+    private void PollPending(IReadOnlyList<ProcessIdentity> running, DateTime utcNow)
+    {
+        var active = _active!;
+        var matches = ProcessMatcher.FindMatches(active.ProfileProcess, running).Where(item => item.Id > 0 && item.StartTimeUtc != default && item.StartTimeUtc >= active.LaunchRequestedUtc!.Value - TimeSpan.FromSeconds(2)).ToArray();
+        if (matches.Length == 1)
+        { active.Process = matches[0]; active.ActivatedUtc = utcNow; active.ReapplyCount = 0; _nextActionUtc = utcNow + _verificationInterval; SetStatus(ProfileMonitorState.Active, $"Profilziele für '{active.ProfileProcess}' sind aktiv.", active.ProfileProcess, PrimaryMode(active.Profile), $"Steam-Zielprozess übernommen (PID {matches[0].Id})", utcNow, active.LaunchPlan.Strategy); return; }
+        if (utcNow >= active.PendingUntilUtc) { active.ProcessExited = true; AddEvent(utcNow, "Steam-Start abgebrochen: Zielprozess wurde nicht rechtzeitig erkannt."); TryRestore(utcNow); return; }
+        EnsureTargets(utcNow, pending: true);
+    }
+
+    private ProfileLaunchResult StartDirect(Active active, DateTime utcNow)
+    {
+        ILaunchedApplication? launched = null;
+        try
+        {
+            launched = _launcher.Launch(active.LaunchPlan.ExpectedExecutablePath);
+            var identity = launched.Identity;
+            if (identity.Id <= 0 || identity.StartTimeUtc == default || !string.Equals(ProcessMatcher.CanonicalizePath(identity.ExecutablePath), active.LaunchPlan.ExpectedExecutablePath, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Windows hat keine eindeutig überwachbare Prozessinstanz für die ausgewählte EXE geliefert.");
+            active.Process = identity; active.ActivatedUtc = utcNow; _nextActionUtc = utcNow + _verificationInterval;
+            SetStatus(ProfileMonitorState.Active, $"Profilziele für '{active.ProfileProcess}' sind aktiv.", active.ProfileProcess, PrimaryMode(active.Profile), $"Anwendung gestartet (PID {identity.Id})", utcNow, active.LaunchPlan.Strategy);
+            AddEvent(utcNow, $"Anwendung erst nach erfolgreichem Ziel-Batch gestartet: PID {identity.Id}.");
+            return ProfileLaunchResult.Started(identity, active.InitialReceipts.Any(item => item.ToolChanged));
+        }
+        catch (Exception ex) { return FailStart(active, ex, utcNow); }
+        finally { try { launched?.Dispose(); } catch { } }
+    }
+
+    private ProfileLaunchResult StartSteam(Active active, DateTime utcNow)
+    {
+        try
+        {
+            if (!IsValidSteamLaunchPlan(active.LaunchPlan)) throw new InvalidOperationException("Der Steam-Startplan ist unvollständig.");
+            _launcher.LaunchSteam(active.LaunchPlan.SteamUri!);
+            active.LaunchRequestedUtc = utcNow; active.PendingUntilUtc = utcNow + _pendingLaunchTimeout; _nextActionUtc = utcNow + _verificationInterval;
+            SetStatus(ProfileMonitorState.PendingLaunch, $"Steam-Start ausgelöst; wartet auf '{active.ProfileProcess}'.", active.ProfileProcess, PrimaryMode(active.Profile), "Wartet auf Zielprozess", utcNow, active.LaunchPlan.Strategy);
+            AddEvent(utcNow, "Steam-URI erst nach erfolgreichem Ziel-Batch ausgelöst.");
+            return new ProfileLaunchResult(true, DisplayModeChanged: active.InitialReceipts.Any(item => item.ToolChanged));
+        }
+        catch (Exception ex) { return FailStart(active, ex, utcNow); }
+    }
+
+    private ProfileLaunchResult FailStart(Active active, Exception exception, DateTime utcNow)
+    {
+        active.ProcessExited = true; AddEvent(utcNow, $"Anwendungsstart fehlgeschlagen: {exception.Message}");
+        var restore = TryRestore(utcNow);
+        return ProfileLaunchResult.Failed($"Die Anwendung konnte nicht gestartet werden: {exception.Message}", startError: exception.Message,
+            rollbackError: restore.Success ? null : restore.Error, displayModeChanged: active.InitialReceipts.Any(item => item.ToolChanged));
+    }
+
+    private OperationResult TryRestore(DateTime utcNow)
+    {
+        var active = _active!;
+        var receipts = (active.RestoreDebts.Count > 0 ? active.RestoreDebts.Select(item => item.Receipt) : active.InitialReceipts)
+            .Where(item => item.ToolChanged).ToArray();
+        if (receipts.Length == 0) { FinishRestore(utcNow); return OperationResult.Ok(); }
+        TargetedDisplayRestoreResult result;
+        try { result = _display.Restore(CloneReceipts(receipts)); }
+        catch (Exception ex)
+        {
+            _retryCount++; _nextActionUtc = utcNow + _retryInterval;
+            SetStatus(ProfileMonitorState.Restoring, $"Originalziele konnten nicht wiederhergestellt werden: {ex.Message} Neuer Versuch folgt.", active.ProfileProcess, PrimaryMode(active.Profile), ex.Message, utcNow, active.LaunchPlan.Strategy);
+            return OperationResult.Fail(ex.Message);
+        }
+        if (result.Success && active.RestoreDebts.Count > 0 && active.RestoreInitialAfterDebts)
+        {
+            // A failed rollback is restored to its safe intermediate state first;
+            // the immutable initial receipts still have to be restored afterwards.
+            active.RestoreDebts = []; active.RestoreInitialAfterDebts = false;
+            return TryRestore(utcNow);
+        }
+        if (result.Success) { active.RestoreDebts = []; FinishRestore(utcNow); return OperationResult.Ok(); }
+        active.RestoreDebts = CloneDebts(result.RemainingDebts); _retryCount++; _nextActionUtc = utcNow + _retryInterval;
+        var error = DescribeDebts(active.RestoreDebts);
+        SetStatus(ProfileMonitorState.Restoring, $"Originalziele konnten nicht vollständig wiederhergestellt werden: {error} Neuer Versuch folgt.", active.ProfileProcess, PrimaryMode(active.Profile), error, utcNow, active.LaunchPlan.Strategy, active.Profile.Policy, result.Errors);
+        AddEvent(utcNow, $"Wiederherstellungsschulden verbleiben: {error}.");
+        return OperationResult.Fail(error);
+    }
+
+    private void FinishRestore(DateTime utcNow)
+    {
+        var name = _active?.ProfileProcess;
+        _active = null; _retryCount = 0;
+        if (_stopRequested) SetStopped(utcNow);
+        else { SetStatus(ProfileMonitorState.Idle, "Wartet auf einen Profilprozess.", null, null, "Originalziele wiederhergestellt", utcNow); AddEvent(utcNow, $"Originalziele wiederhergestellt: {name}."); }
+    }
+
+    private void QueueRestoreOnly(string path, DisplayProfile profile, LaunchPlan plan, TargetedDisplayApplyResult apply, DateTime utcNow)
+    {
+        _active = NewActive(path, profile, plan, apply, null);
+        _active.ProcessExited = true; _active.RestoreDebts = CloneDebts(apply.RestoreDebts); _nextActionUtc = utcNow + _retryInterval;
+        var error = DescribeDebts(_active.RestoreDebts);
+        SetStatus(ProfileMonitorState.Restoring, $"Teilrollback muss zuerst wiederhergestellt werden: {error}", path, PrimaryMode(profile), error, utcNow, plan.Strategy, profile.Policy, apply.Errors);
+    }
+
+    private Active NewActive(string process, DisplayProfile profile, LaunchPlan plan, TargetedDisplayApplyResult? apply, ProcessIdentity? identity) => new()
+    {
+        ProfileProcess = process, Profile = profile.DeepCopy(), LaunchPlan = plan, Process = identity,
+        ExternallyDetected = identity is not null,
+        InitialApplied = apply?.Success == true, InitialReceipts = apply is null ? [] : CloneReceipts(apply.Receipts),
+        RestoreDebts = apply is null ? [] : CloneDebts(apply.RestoreDebts), LastApplyErrors = apply is null ? [] : apply.Errors.ToArray()
+    };
+
+    private TargetedDisplayApplyResult Apply(IReadOnlyList<DisplayProfileTarget> targets)
+    {
+        try { return _display.Apply(targets); }
+        catch (Exception ex) { return new TargetedDisplayApplyResult(false, [], [new TargetedDisplayError(null, null, TargetedDisplayStage.Apply, TargetedDisplayErrorCode.NativeChangeRejected, ex.Message)], []); }
+    }
+
+    private static IReadOnlyList<DisplayProfileTarget> CreateBoundTargets(Active active)
+    {
+        var receipts = active.InitialReceipts.ToDictionary(item => item.TargetIndex);
+        if (receipts.Count != active.Profile.Targets.Count)
+            throw new InvalidOperationException("Die initialen Zielbelege sind unvollständig; es wird kein weiterer Display-Batch ausgeführt.");
+
+        return active.Profile.Targets.Select((target, index) =>
+        {
+            if (!receipts.TryGetValue(index, out var receipt) || string.IsNullOrWhiteSpace(receipt.MonitorDevicePath))
+                throw new InvalidOperationException("Ein initialer Zielbeleg besitzt keinen konkreten Monitor-Gerätepfad.");
+            var friendlyName = target.MonitorSelector is SpecificMonitor specific && !string.IsNullOrWhiteSpace(specific.FriendlyNameSnapshot)
+                ? specific.FriendlyNameSnapshot
+                : receipt.MonitorDevicePath;
+            return new DisplayProfileTarget(
+                new SpecificMonitor(receipt.MonitorDevicePath, friendlyName),
+                target.Mode);
+        }).ToArray();
+    }
+
+    private static void MarkInitialReceiptsChanged(Active active, IEnumerable<TargetedDisplayReceipt> changedReceipts)
+    {
+        var changed = changedReceipts.Where(item => item.ToolChanged).ToDictionary(item => item.TargetIndex);
+        active.InitialReceipts = active.InitialReceipts.Select(initial =>
+            changed.TryGetValue(initial.TargetIndex, out var current) && string.Equals(
+                initial.MonitorDevicePath, current.MonitorDevicePath, StringComparison.OrdinalIgnoreCase)
+                ? initial with { ToolChanged = true }
+                : initial).ToArray();
+    }
+
+    private LaunchPlan SafePlan(string path)
+    {
+        try
+        {
+            var plan = _launchPlans.Resolve(path);
+            return string.Equals(plan.ExpectedExecutablePath, path, StringComparison.OrdinalIgnoreCase) && plan.Strategy is LaunchStrategy.Direct or LaunchStrategy.Steam && (plan.Strategy != LaunchStrategy.Steam || IsValidSteamLaunchPlan(plan)) ? plan : LaunchPlan.Direct(path);
+        }
+        catch { return LaunchPlan.Direct(path); }
+    }
+
+    private static bool IsPending(Active active) => active.Process is null && !active.ProcessExited && active.LaunchRequestedUtc is not null && active.PendingUntilUtc is not null;
+    private static bool Contains(IReadOnlyList<ProcessIdentity> processes, ProcessIdentity process) => processes.Any(item => item.Id == process.Id && item.StartTimeUtc == process.StartTimeUtc && string.Equals(item.ExecutablePath, process.ExecutablePath, StringComparison.OrdinalIgnoreCase));
+    private static bool IsValidSteamLaunchPlan(LaunchPlan plan) => !string.IsNullOrEmpty(plan.SteamAppId) && plan.SteamAppId.All(char.IsAsciiDigit) && string.Equals(plan.SteamUri, SteamLaunchInfo.CreateUri(plan.SteamAppId), StringComparison.Ordinal);
+    private static bool MayReapply(Active active, DateTime now, bool pending, out string reason)
+    {
+        if (pending) { reason = string.Empty; return true; }
+        if (active.Profile.Policy == ProfileRetentionPolicy.Once) { reason = "Einmalige Aktivierung abgeschlossen."; return false; }
+        if (active.Profile.Policy == ProfileRetentionPolicy.Startup && (now >= active.ActivatedUtc!.Value + StartupWindow || active.ReapplyCount >= MaximumStartupReapplies)) { reason = "Die Startphasen-Richtlinie erlaubt keine weitere Nachsetzung."; return false; }
+        reason = string.Empty; return true;
+    }
+    private static DisplayMode? PrimaryMode(DisplayProfile profile) => profile.Targets.FirstOrDefault()?.Mode;
+    private static string FormatReapplies(Active active) => active.Profile.Policy == ProfileRetentionPolicy.Startup ? $"{active.ReapplyCount}/{MaximumStartupReapplies}" : active.Profile.Policy == ProfileRetentionPolicy.Continuous ? "fortlaufend" : "0";
+    private static string DescribeErrors(IReadOnlyList<TargetedDisplayError> errors) => errors.Count == 0 ? "Unbekannter Displayfehler." : string.Join(" | ", errors.Select(item => item.Message).Distinct());
+    private static string DescribeDebts(IReadOnlyList<DisplayRestoreDebt> debts) => debts.Count == 0 ? "–" : string.Join(" | ", debts.Select(item => $"{item.Receipt.MonitorDevicePath}: {item.Error.Message}").Distinct());
+    private static IReadOnlyList<TargetedDisplayReceipt> CloneReceipts(IEnumerable<TargetedDisplayReceipt> receipts) => receipts.Select(item => item with { OriginalMode = item.OriginalMode with { }, TargetMode = item.TargetMode with { } }).ToArray();
+    private static IReadOnlyList<DisplayRestoreDebt> CloneDebts(IEnumerable<DisplayRestoreDebt> debts) => debts.Select(item => new DisplayRestoreDebt(CloneReceipts([item.Receipt])[0], item.Error with { })).ToArray();
+    private void SetStopped(DateTime now) { _stopped = true; _active = null; SetStatus(ProfileMonitorState.Stopped, "Profilüberwachung wurde gestoppt.", null, null, null, now); AddEvent(now, "Profilüberwachung gestoppt."); }
+    private void SetStatus(ProfileMonitorState state, string message, string? process, DisplayMode? target, string? result, DateTime now, LaunchStrategy? strategy = null, ProfileRetentionPolicy? policy = null, IReadOnlyList<TargetedDisplayError>? errors = null)
+    {
+        var active = _active;
+        var receiptByTarget = active?.InitialReceipts.ToDictionary(item => item.TargetIndex) ?? new Dictionary<int, TargetedDisplayReceipt>();
+        var debtByPath = active?.RestoreDebts.GroupBy(item => item.Receipt.MonitorDevicePath, StringComparer.OrdinalIgnoreCase).ToDictionary(item => item.Key, item => item.Last().Error.Message, StringComparer.OrdinalIgnoreCase) ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var targetStatuses = active?.Profile.Targets.Select((item, index) =>
+        {
+            receiptByTarget.TryGetValue(index, out var receipt);
+            var currentError = errors?.FirstOrDefault(error => error.TargetIndex == index);
+            var apply = currentError is not null && currentError.Stage != TargetedDisplayStage.Restore
+                ? currentError.Message
+                : active.LastApplyErrors.FirstOrDefault(error => error.TargetIndex == index)?.Message;
+            var restore = receipt is not null && debtByPath.TryGetValue(receipt.MonitorDevicePath, out var debt) ? debt : null;
+            return new ProfileMonitorTargetStatus(receipt?.MonitorDevicePath ?? currentError?.MonitorDevicePath, DisplayProfilePresentation.DescribeTargets(new DisplayProfile(ProfileRetentionPolicy.Once, [item])), item.Mode, receipt is null ? null : ToDisplayMode(receipt.OriginalMode), receipt?.ToolChanged == true, apply, restore);
+        }).ToArray();
+        Volatile.Write(ref _status, new ProfileMonitorStatus(state, message, process, target, now, result, _retryCount, strategy, policy ?? active?.Profile.Policy, active?.ReapplyCount ?? 0, targetStatuses, active?.ExternallyDetected == true));
+    }
+    private static DisplayMode ToDisplayMode(EndpointDisplayMode mode) => new() { Width = mode.Width, Height = mode.Height, Frequency = mode.Frequency, Label = mode.Label };
+    private void AddEvent(DateTime now, string message) => _events.Add(now, message);
+}
+
 public sealed class ProfileManager : IDisposable
 {
-    private readonly ProfileMonitor _monitor;
+    private readonly TargetedProfileMonitor _monitor;
     private readonly CancellationTokenSource _cancellation = new();
     private readonly Thread _thread;
     private readonly object _lifecycleSync = new();
@@ -1015,19 +1484,13 @@ public sealed class ProfileManager : IDisposable
 
     public ProfileManager(
         ConcurrentDictionary<string, DisplayProfile> profiles,
-        IDisplayService? display = null,
+        ITargetedDisplayService targetedDisplay,
         IProcessProvider? processes = null,
         IApplicationLauncher? launcher = null,
         Func<string, bool>? fileExists = null,
         ILaunchPlanResolver? launchPlans = null)
     {
-        _monitor = new ProfileMonitor(
-            profiles,
-            display ?? new WindowsDisplayService(),
-            processes ?? new SystemProcessProvider(),
-            launcher: launcher,
-            fileExists: fileExists,
-            launchPlans: launchPlans);
+        _monitor = new TargetedProfileMonitor(profiles, targetedDisplay, processes ?? new SystemProcessProvider(), launcher: launcher, fileExists: fileExists, launchPlans: launchPlans);
         _thread = new Thread(Monitor) { IsBackground = true, Name = "DisplayModeSwitcher.ProfileMonitor" };
     }
 

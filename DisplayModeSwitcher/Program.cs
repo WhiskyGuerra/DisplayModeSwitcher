@@ -25,7 +25,11 @@ namespace DisplayModeSwitcher
             var store = new ProfileStore(profilePath, legacyPath);
             var autostart = new AutostartService(Application.ExecutablePath, new CurrentUserAutostartRegistry());
 
-            using var manager = new ProfileManager(store.Profiles);
+            // Profile monitoring uses only explicit source-bound target transactions.
+            // The legacy global display service remains confined to the manual tray path.
+            var topology = new WindowsDisplayTopologyService();
+            var targetedDisplay = new TargetedDisplayService(topology, new WindowsDisplayApi());
+            using var manager = new ProfileManager(store.Profiles, targetedDisplay);
             manager.Start();
 
             Application.EnableVisualStyles();

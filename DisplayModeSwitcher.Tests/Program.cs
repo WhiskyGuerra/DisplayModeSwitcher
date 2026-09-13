@@ -56,7 +56,7 @@ var tests = new (string Name, Action Run)[]
     ("Ungültige und unbekannte V2-Daten sperren Laden und Überschreiben", InvalidV2ProfilesAreBlockedTransactionally),
     ("Ungültige In-Memory-Ziele überschreiben keine gültige Datei", InvalidInMemoryTargetsDoNotOverwrite),
     ("Mehrmonitor-Workflows rollen vollständige Ziellisten tief zurück", MultiTargetWorkflowRollsBackDeeply),
-    ("Specific- und Mehrmonitorprofile bleiben zur Laufzeit ohne Seiteneffekt", UnsupportedTargetsHaveNoRuntimeSideEffects),
+    ("Legacy-Monitor lässt nicht unterstützte Ziele ohne Seiteneffekt", UnsupportedTargetsHaveNoRuntimeSideEffects),
     ("Die Übergangsoberfläche reduziert keine nicht unterstützten Ziele", CurrentUiWorkflowPreservesUnsupportedTargets),
     ("Monitoridentitäten vergleichen Gerätepfade ohne Großschreibung", MonitorSelectorIdentityIsCaseInsensitive),
     ("Einmalige Richtlinie setzt während der Laufzeit nicht nach", OncePolicyDoesNotReapply),
@@ -93,7 +93,22 @@ var tests = new (string Name, Action Run)[]
     ("Ein-Hertz-Toleranz entscheidet nur über die Notwendigkeit eines Writes", TargetedDisplayServiceTests.FrequencyToleranceControlsOnlyWhetherToWrite),
     ("Native Moduskandidaten werden über aktuelle BPP und Flags aufgelöst", TargetedDisplayServiceTests.CandidateUsesCurrentBppAndFlags),
     ("Native Zielaufrufe erlauben nur sichere Felder und zwei Flag-Arten", TargetedDisplayServiceTests.NativeContractHasOnlyAllowedFieldsAndKinds),
-    ("Alle nativen Rückgabecodes einschließlich Restart sind strukturiert", TargetedDisplayServiceTests.NativeReturnCodesAreCompleteAndRestartFailsApply)
+    ("Alle nativen Rückgabecodes einschließlich Restart sind strukturiert", TargetedDisplayServiceTests.NativeReturnCodesAreCompleteAndRestartFailsApply),
+    ("Target-Profilengine aktiviert Primär-, Specific- und Mehrfachziele", TargetedProfileMonitorTests.InitialBatchesAreExact),
+    ("Target-Profilengine wiederholt sichere Initialfehler mit Abstand", TargetedProfileMonitorTests.InitialFailureRetriesWithoutLatch),
+    ("Target-Profilengine drosselt kontrollierte Apply-Wiederholungen", TargetedProfileMonitorTests.ControlledApplyFailureIsRateLimited),
+    ("Target-Profilengine sperrt bei Rollback-Schuld Apply und Start", TargetedProfileMonitorTests.RollbackDebtBlocksFurtherWork),
+    ("Target-Profilengine stellt nur noch offene Zielschulden wieder her", TargetedProfileMonitorTests.RestoreDebtRetriesOnlyRemainingTarget),
+    ("Target-Profilengine bewahrt Initialbelege bei Nachsetzungen", TargetedProfileMonitorTests.ReapplyPoliciesAndInitialReceipts),
+    ("Target-Profilengine bindet Nachsetzungen an initiale Gerätepfade", TargetedProfileMonitorTests.ReapplyRemainsBoundAndOwnsLateChanges),
+    ("Target-Profilengine restauriert nach Teilrollback den Initialbeleg", TargetedProfileMonitorTests.ReapplyDebtThenRestoresInitialReceipt),
+    ("Target-Profilengine startet Direct erst nach Ziel-Batch", TargetedProfileMonitorTests.DirectLaunchSafetyAndRestore),
+    ("Target-Profilengine serialisiert parallele kontrollierte Starts", TargetedProfileMonitorTests.ParallelLaunchStartsOnce),
+    ("Target-Profilengine hält Steam-Ziele und stellt bei Timeout wieder her", TargetedProfileMonitorTests.SteamPendingAndTimeoutRestore),
+    ("Target-Profilengine bewahrt Stop-Schulden aus Steam Pending", TargetedProfileMonitorTests.StopPendingDebtRemainsManaged),
+    ("Target-Profilengine begrenzt das Steam-Wartefenster", TargetedProfileMonitorTests.PendingTimeoutIsBounded),
+    ("Target-Profilengine restauriert ToolChanged-false Ziele nicht", TargetedProfileMonitorTests.UnchangedTargetsAreNotRestored),
+    ("Target-Profilengine liefert per-target Diagnose", TargetedProfileMonitorTests.DiagnosticsArePerTarget)
 };
 
 var failures = new List<string>();
@@ -228,7 +243,7 @@ static void ReusedPidRestoresOriginal()
 static void ManagerLifecycleIsCancellable()
 {
     var profiles = new ConcurrentDictionary<string, DisplayProfile>(StringComparer.OrdinalIgnoreCase);
-    var manager = new ProfileManager(profiles, new FakeDisplay(), new FakeProcesses());
+    var manager = new ProfileManager(profiles, new TargetedProfileMonitorTests.FakeTargetedDisplay(), new FakeProcesses());
     manager.Start();
     manager.Start();
     manager.Dispose();

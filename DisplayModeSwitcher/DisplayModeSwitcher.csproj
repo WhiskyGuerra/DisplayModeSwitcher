@@ -26,5 +26,9 @@
     </Content>
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="DisplayModeSwitcher.Tests" />
+  </ItemGroup>
+
 
 </Project>

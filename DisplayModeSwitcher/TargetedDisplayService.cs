@@ -68,7 +68,7 @@ public sealed record DisplayRestoreDebt(TargetedDisplayReceipt Receipt, Targeted
 
 public sealed class TargetedDisplayApplyResult
 {
-    internal TargetedDisplayApplyResult(
+    public TargetedDisplayApplyResult(
         bool success,
         IEnumerable<TargetedDisplayReceipt> receipts,
         IEnumerable<TargetedDisplayError> errors,
@@ -88,7 +88,7 @@ public sealed class TargetedDisplayApplyResult
 
 public sealed class TargetedDisplayRestoreResult
 {
-    internal TargetedDisplayRestoreResult(
+    public TargetedDisplayRestoreResult(
         IEnumerable<TargetedDisplayError> errors,
         IEnumerable<DisplayRestoreDebt> remainingDebts)
     {
@@ -109,8 +109,8 @@ public interface ITargetedDisplayService
 
 /// <summary>
 /// Führt ausschließlich explizit aufgelöste, quellbezogene Modusänderungen aus.
-/// Die Klasse ist bewusst noch mit keiner Profil-, Tray- oder UI-Laufzeit
-/// verbunden.
+/// Die Profil-Laufzeit nutzt diese Schicht; das manuelle Tray-Schalten bleibt
+/// bis zur späteren Monitorwahl-Oberfläche getrennt.
 /// </summary>
 public sealed class TargetedDisplayService : ITargetedDisplayService
 {

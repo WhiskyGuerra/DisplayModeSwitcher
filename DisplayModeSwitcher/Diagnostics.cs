@@ -60,7 +60,7 @@ public static class DiagnosticReportFormatter
             $"Zustand: {DisplayState(data.MonitorStatus.State)}",
             $"Meldung: {data.MonitorStatus.Message}",
             $"Profil: {data.MonitorStatus.ProfileProcess ?? "–"}",
-            $"Startart: {FormatLaunchStrategy(data.MonitorStatus.LaunchStrategy)}",
+            $"Startart: {FormatLaunchStrategy(data.MonitorStatus.LaunchStrategy, data.MonitorStatus.ExternallyDetected)}",
             $"Zielmodus: {FormatMode(data.MonitorStatus.TargetMode)}",
             $"Richtlinie: {FormatPolicy(data.MonitorStatus.Policy)}",
             $"Nachsetzungen: {FormatReapplyCount(data.MonitorStatus)}",
@@ -68,8 +68,22 @@ public static class DiagnosticReportFormatter
             $"Letztes Ergebnis: {data.MonitorStatus.LastResult ?? "–"}",
             $"Wiederholungen: {data.MonitorStatus.RetryCount}",
             "",
-            "Ereignisse (UTC):"
+            "Monitorziele (gezielte Profil-Engine):"
         };
+        var targets = data.MonitorStatus.Targets;
+        if (targets is null || targets.Count == 0)
+            lines.Add("–");
+        else
+        {
+            foreach (var target in targets)
+            {
+                lines.Add($"{target.Selector}: {FormatMode(target.Target)}; Pfad: {target.MonitorDevicePath ?? "noch nicht aufgelöst"}; Original: {FormatMode(target.Original)}; Tool geändert: {(target.ToolChanged ? "ja" : "nein")}");
+                if (!string.IsNullOrWhiteSpace(target.ApplyError)) lines.Add($"  Apply-Fehler: {target.ApplyError}");
+                if (!string.IsNullOrWhiteSpace(target.RestoreError)) lines.Add($"  Restore-Schuld: {target.RestoreError}");
+            }
+        }
+        lines.Add("");
+        lines.Add("Ereignisse (UTC):");
         if (data.Events.Count == 0) lines.Add("–");
         else lines.AddRange(data.Events.Select(item => $"{item.TimestampUtc:O}  {item.Message}"));
         return string.Join(Environment.NewLine, lines);
@@ -102,7 +116,9 @@ public static class DiagnosticReportFormatter
         _ => state.ToString()
     };
 
-    public static string FormatLaunchStrategy(LaunchStrategy? strategy) => strategy switch
+    public static string FormatLaunchStrategy(LaunchStrategy? strategy, bool externallyDetected = false) => externallyDetected
+        ? "Extern erkannt"
+        : strategy switch
     {
         LaunchStrategy.Steam => "Steam",
         LaunchStrategy.Direct => "Direkt",

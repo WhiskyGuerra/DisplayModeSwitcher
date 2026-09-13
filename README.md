@@ -102,27 +102,19 @@ Dateifehler.
 
 ## Grenzen und Sicherheitsverhalten
 
-- Eine neue interne Windows-Schicht kann die aktive Topologie bereits
-  erfassen: physische Monitor-Gerätepfade und die von
-  Windows gelieferten Friendly Names werden dabei getrennt von der aktuellen
-  `DISPLAYx`-Zuordnung, Primärstatus, Anschluss und Position gehalten. Auch die
-  aktuellen und verfügbaren Modi können pro exakter Anzeigequelle gelesen
-  werden. Eine noch nicht verdrahtete, testbare Target-Service-Schicht kann
-  außerdem explizite Monitorziele vollständig vorprüfen, temporär und
-  quellbezogen anwenden sowie anhand konkreter Gerätepfad-Belege
-  wiederherstellen. Sie blockiert unklare Pfade, Klon-Gruppen, doppelte Quellen
-  und mehrdeutige Modi vor dem ersten Apply und rollt Teiländerungen nur auf den
-  ausgewählten Monitoren zurück. Diese Schicht ist noch nicht an Profile,
-  Laufzeit oder Oberfläche angebunden und stellt daher noch keine fertige oder
-  hardwareverifizierte Multi-Monitor-Unterstützung dar.
-- Die Laufzeit und die aktuelle Profiloberfläche berücksichtigen in diesem
-  Zwischenstand weiterhin ausschließlich genau ein Ziel für den Primärmonitor.
-  Bereits gespeicherte spezifische oder mehrere Monitorziele werden angezeigt
-  und bewahrt, aber weder ausgeführt noch in der Oberfläche bearbeitet. Ein
-  kontrollierter oder automatischer Start wird für solche Profile ohne
-  Display- oder Startaktion abgelehnt. Oberflächenintegration, manuelle
-  Neuverknüpfung und die Anbindung des gezielten Target-Service folgen in
-  späteren Checkpoints.
+- Die Profil-Engine führt automatische und kontrolliert gestartete Profile über
+  gezielte, transaktionale Monitorziele aus. Alle Ziele werden vor dem Start
+  vollständig vorgeprüft; die ersten konkreten Gerätepfad-Belege bleiben für
+  die Wiederherstellung erhalten. Teil-Rollback-Schulden werden vor jedem
+  erneuten Apply oder Start ausschließlich wiederhergestellt. Dies ist mit
+  Fakes getestet, aber noch keine Hardwareabnahme.
+- Die Topologieschicht trennt physische Monitor-Gerätepfade und Friendly Names
+  von der aktuellen `DISPLAYx`-Zuordnung. Sie blockiert unklare Pfade,
+  Klon-Gruppen, doppelte Quellen und mehrdeutige Modi vor dem ersten Apply.
+- Monitorwahl, Profil-Editor für mehrere Ziele und ein target-aware Tray-Menü
+  sind weiterhin ausstehend. Das manuelle Tray-Schalten bleibt bis dahin beim
+  bisherigen globalen Primärmonitorpfad; gespeicherte spezifische und mehrere
+  Profilziele werden jedoch von der Profil-Engine ausgeführt.
 - Geschützte oder bereits beendete Prozesse können nicht als Profil verwendet
   werden.
 - Epic, GOG und sonstige Launcher werden derzeit nicht eigens erkannt. Sie

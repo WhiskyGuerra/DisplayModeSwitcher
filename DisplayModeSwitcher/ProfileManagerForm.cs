@@ -280,18 +280,12 @@ namespace DisplayModeSwitcher
         {
             var item = _profileList.SelectedItem as ProfileListItem;
             _launchButton.Enabled = !_launchInProgress && item is not null &&
-                DisplayProfileCompatibility.TryGetCurrentPrimaryTarget(item.Profile, out _) &&
-                Path.IsPathFullyQualified(item.ProcessKey) && !item.IsMissingExecutable;
+                item.Profile.Targets.Count > 0 && Path.IsPathFullyQualified(item.ProcessKey) && !item.IsMissingExecutable;
         }
 
         private async void RefreshLaunchType(ProfileListItem item)
         {
             var loadVersion = ++_launchTypeLoadVersion;
-            if (!DisplayProfileCompatibility.TryGetCurrentPrimaryTarget(item.Profile, out _))
-            {
-                _launchTypeLabel.Text = "Startart nur beim Klick: nicht unterstützt";
-                return;
-            }
             if (!Path.IsPathFullyQualified(item.ProcessKey) || item.IsMissingExecutable)
             {
                 _launchTypeLabel.Text = "Startart nur beim Klick: –";
