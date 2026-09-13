@@ -1,5 +1,8 @@
 # DisplayModeSwitcher
 
+Der aktuelle Entwicklungsstand und die nächsten Arbeitspakete stehen in der
+[Roadmap](ROADMAP.md).
+
 DisplayModeSwitcher ist ein Windows-Tool im Infobereich, das den Anzeigemodus
 des Primärmonitors automatisch an ein laufendes Spiel oder Programm anpasst.
 Beim Beenden des Prozesses wird der zuvor aktive Modus wiederhergestellt.
