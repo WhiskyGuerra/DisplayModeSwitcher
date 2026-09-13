@@ -51,7 +51,7 @@ namespace DisplayModeSwitcher
             var manageItem = new ToolStripMenuItem("Profile verwalten...");
             manageItem.Click += (s, e) =>
             {
-                using var form = new ProfileManagerForm(_store);
+                using var form = new ProfileManagerForm(_store, _profileManager);
                 form.ShowDialog();
             };
             contextMenu.Items.Add(manageItem);

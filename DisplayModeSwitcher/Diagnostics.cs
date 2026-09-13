@@ -88,6 +88,7 @@ public static class DiagnosticReportFormatter
     public static string DisplayState(ProfileMonitorState state) => state switch
     {
         ProfileMonitorState.Idle => "Wartet",
+        ProfileMonitorState.Launching => "Start wird vorbereitet",
         ProfileMonitorState.Active => "Aktiv",
         ProfileMonitorState.RetryPending => "Wiederholung ausstehend",
         ProfileMonitorState.Restoring => "Wiederherstellung",

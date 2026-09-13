@@ -21,6 +21,13 @@ einen laufenden Prozess eindeutig treffen. Bei mehreren Treffern oder mehreren
 gleichzeitig passenden Profilen schaltet das Tool aus Sicherheitsgründen nicht
 automatisch.
 
+Ein ausgewähltes Profil mit vorhandenem vollständigem EXE-Pfad kann über
+**Im Profilmodus starten** kontrolliert gestartet werden. Das Tool setzt und
+bestätigt zuerst den Zielmodus und startet erst danach die EXE. Schlägt der
+Start fehl, wird ein zuvor vom Tool geänderter Modus sofort bestmöglich
+wiederhergestellt. Legacy-Profile nur mit EXE-Namen können weiterhin
+automatisch erkannt, aber nicht über diese Schaltfläche gestartet werden.
+
 Die Überwachung prüft den Prozess regelmäßig. Ein fehlgeschlagener Wechsel wird
 mit Abstand erneut versucht, und eine spätere Abweichung vom Profilmodus wird
 erneut korrigiert. Der Status ist im Tray-Menü sichtbar.
@@ -46,6 +53,12 @@ nicht gelöscht. Beschädigte oder ungültige Profildaten werden nicht
 - Es wird ausschließlich der Primärmonitor berücksichtigt.
 - Geschützte oder bereits beendete Prozesse können nicht als Profil verwendet
   werden.
+- Manche Spiele starten über einen Bootstrapper, Launcher oder DRM-Prozess, der
+  sofort endet und die eigentliche Spiel-EXE separat startet. Das Tool verfolgt
+  bewusst nur die von Windows eindeutig zurückgegebene Prozessinstanz und rät
+  keine beliebigen Folge- oder Kindprozesse. Für solche Spiele kann der
+  kontrollierte Start daher früh wiederherstellen; die automatische Erkennung
+  der tatsächlich profilierten Spiel-EXE bleibt die verlässlichere Variante.
 - Das ursprüngliche Anzeigemodus wird nur dann beim Prozessende bzw. beim
   Beenden des Tools wiederhergestellt, wenn das Tool den Wechsel erfolgreich
   durchgeführt hat.
@@ -79,4 +92,3 @@ Anwendung ist für Windows bestimmt.
 5. Helldivers 2 beenden und prüfen, dass der ursprüngliche Modus
    wiederhergestellt wird. Diese Abnahme muss auf dem Zielsystem erfolgen; ein
    realer Spieltest ist nicht Bestandteil des automatisierten Tests.
-

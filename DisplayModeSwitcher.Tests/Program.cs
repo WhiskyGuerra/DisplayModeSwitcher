@@ -25,7 +25,17 @@ var tests = new (string Name, Action Run)[]
     ("Profilbearbeitung wechselt Schlüssel mit Rückrollschutz", ProfileEditingRollsBackOnSaveFailure),
     ("Fehlende EXE und Legacy-Profile werden korrekt unterschieden", MissingExecutableDoesNotFlagLegacyProfile),
     ("Diagnosepuffer ist begrenzt und chronologisch", DiagnosticBufferIsBounded),
-    ("Diagnosebericht formatiert Snapshot und Ereignisse", DiagnosticReportFormatsSnapshot)
+    ("Diagnosebericht formatiert Snapshot und Ereignisse", DiagnosticReportFormatsSnapshot),
+    ("Profilmodus wird vor dem Anwendungsstart gesetzt", ProfileModeIsSetBeforeLaunch),
+    ("Bereits aktiver Profilmodus wird nicht verändert", AlreadyActiveProfileModeIsNotChanged),
+    ("Setzfehler verhindert den Anwendungsstart", SetFailurePreventsLaunch),
+    ("Startfehler stellt den Originalmodus wieder her", LaunchFailureRestoresOriginal),
+    ("Wiederherstellungsfehler nach Startfehler wird berichtet", LaunchFailureReportsRestoreFailure),
+    ("Ungültige Prozessidentität startet keine unüberwachte Sitzung", InvalidLaunchedIdentityRestoresOriginal),
+    ("Gestartete Prozessinstanz wird bis zum Ende überwacht", LaunchedProcessRestoresOriginalOnExit),
+    ("Parallele Startaufrufe starten höchstens einmal", ParallelLaunchStartsOnce),
+    ("Aktives Profil lehnt einen weiteren Start ab", ActiveProfileRejectsLaunch),
+    ("Legacy- und fehlende Profile starten ohne Seiteneffekt nicht", InvalidLaunchProfilesHaveNoSideEffects)
 };
 
 var failures = new List<string>();
@@ -185,6 +195,153 @@ static void DiagnosticReportFormatsSnapshot()
     True(report.Contains("Zustand: Wiederholung ausstehend"));
     True(report.Contains("Wiederholungen: 2"));
     True(report.Contains("Profilmodus konnte nicht angewendet werden."));
+}
+
+static void ProfileModeIsSetBeforeLaunch()
+{
+    var order = new List<string>();
+    var fixture = new LaunchFixture();
+    fixture.Display.OnSet = _ => order.Add("set");
+    fixture.Launcher.OnLaunch = _ => order.Add("launch");
+
+    var result = fixture.Monitor.LaunchProfileApplication(fixture.Path, fixture.Now);
+
+    True(result.Success, result.Error);
+    Equal("set,launch", string.Join(',', order));
+    Equal(fixture.Launcher.Identity, result.Process);
+    True(result.DisplayModeChanged);
+    True(fixture.Launcher.LastHandle?.Disposed == true);
+}
+
+static void AlreadyActiveProfileModeIsNotChanged()
+{
+    var fixture = new LaunchFixture();
+    fixture.Display.Current = fixture.Target;
+
+    var result = fixture.Monitor.LaunchProfileApplication(fixture.Path, fixture.Now);
+    True(result.Success, result.Error);
+    True(!result.DisplayModeChanged);
+    Equal(0, fixture.Display.SetCalls.Count);
+
+    fixture.Processes.Items = Array.Empty<ProcessIdentity>();
+    fixture.Monitor.Poll(fixture.Now.AddSeconds(5));
+    Equal(0, fixture.Display.SetCalls.Count);
+}
+
+static void SetFailurePreventsLaunch()
+{
+    var fixture = new LaunchFixture();
+    fixture.Display.Results.Enqueue(OperationResult.Fail("Setzen kaputt"));
+
+    var result = fixture.Monitor.LaunchProfileApplication(fixture.Path, fixture.Now);
+    True(!result.Success);
+    Equal("Setzen kaputt", result.DisplayError);
+    Equal(0, fixture.Launcher.LaunchCount);
+
+    fixture.Display.Results.Enqueue(OperationResult.Ok());
+    True(fixture.Monitor.LaunchProfileApplication(fixture.Path, fixture.Now.AddSeconds(1)).Success);
+}
+
+static void LaunchFailureRestoresOriginal()
+{
+    var fixture = new LaunchFixture();
+    fixture.Launcher.Error = "Start kaputt";
+
+    var result = fixture.Monitor.LaunchProfileApplication(fixture.Path, fixture.Now);
+
+    True(!result.Success);
+    Equal("Start kaputt", result.StartError);
+    True(result.RollbackError is null);
+    Equal(2, fixture.Display.SetCalls.Count);
+    Equal(fixture.Original, fixture.Display.Current);
+}
+
+static void LaunchFailureReportsRestoreFailure()
+{
+    var fixture = new LaunchFixture();
+    fixture.Launcher.Error = "Start kaputt";
+    fixture.Display.Results.Enqueue(OperationResult.Ok());
+    fixture.Display.Results.Enqueue(OperationResult.Fail("Restore kaputt"));
+
+    var result = fixture.Monitor.LaunchProfileApplication(fixture.Path, fixture.Now);
+
+    True(!result.Success);
+    Equal("Start kaputt", result.StartError);
+    Equal("Restore kaputt", result.RollbackError);
+    True(result.Error?.Contains("Restore kaputt", StringComparison.Ordinal) == true);
+    Equal(ProfileMonitorState.Restoring, fixture.Monitor.Status.State);
+
+    fixture.Display.Results.Enqueue(OperationResult.Ok());
+    fixture.Monitor.Poll(fixture.Now.AddSeconds(5));
+    Equal(fixture.Original, fixture.Display.Current);
+    Equal(ProfileMonitorState.Idle, fixture.Monitor.Status.State);
+}
+
+static void InvalidLaunchedIdentityRestoresOriginal()
+{
+    var fixture = new LaunchFixture();
+    fixture.Launcher.Identity = new ProcessIdentity(0, default, fixture.Path);
+
+    var result = fixture.Monitor.LaunchProfileApplication(fixture.Path, fixture.Now);
+
+    True(!result.Success);
+    True(result.StartError?.Contains("eindeutig überwachbare Prozessinstanz", StringComparison.Ordinal) == true);
+    Equal(fixture.Original, fixture.Display.Current);
+    True(fixture.Launcher.LastHandle?.Disposed == true);
+}
+
+static void LaunchedProcessRestoresOriginalOnExit()
+{
+    var fixture = new LaunchFixture();
+    var result = fixture.Monitor.LaunchProfileApplication(fixture.Path, fixture.Now);
+    True(result.Success, result.Error);
+
+    fixture.Processes.Items = [fixture.Launcher.Identity];
+    fixture.Monitor.Poll(fixture.Now.AddSeconds(5));
+    Equal(ProfileMonitorState.Active, fixture.Monitor.Status.State);
+
+    fixture.Processes.Items = Array.Empty<ProcessIdentity>();
+    fixture.Monitor.Poll(fixture.Now.AddSeconds(10));
+
+    Equal(fixture.Original, fixture.Display.Current);
+    Equal(2, fixture.Display.SetCalls.Count);
+    Equal(ProfileMonitorState.Idle, fixture.Monitor.Status.State);
+}
+
+static void ParallelLaunchStartsOnce()
+{
+    var fixture = new LaunchFixture();
+    var first = Task.Run(() => fixture.Monitor.LaunchProfileApplication(fixture.Path, fixture.Now));
+    var second = Task.Run(() => fixture.Monitor.LaunchProfileApplication(fixture.Path, fixture.Now));
+    Task.WaitAll(first, second);
+
+    Equal(1, fixture.Launcher.LaunchCount);
+    Equal(1, new[] { first.Result, second.Result }.Count(result => result.Success));
+}
+
+static void ActiveProfileRejectsLaunch()
+{
+    var fixture = new LaunchFixture();
+    fixture.Processes.Items = [new ProcessIdentity(99, DateTime.UnixEpoch, fixture.Path)];
+    fixture.Monitor.Poll(fixture.Now);
+
+    var result = fixture.Monitor.LaunchProfileApplication(fixture.Path, fixture.Now.AddSeconds(1));
+    True(!result.Success);
+    Equal(0, fixture.Launcher.LaunchCount);
+}
+
+static void InvalidLaunchProfilesHaveNoSideEffects()
+{
+    var fixture = new LaunchFixture(fileExists: _ => false);
+    fixture.Profiles["game.exe"] = fixture.Target;
+
+    var legacy = fixture.Monitor.LaunchProfileApplication("game.exe", fixture.Now);
+    var missing = fixture.Monitor.LaunchProfileApplication(fixture.Path, fixture.Now);
+
+    True(!legacy.Success);
+    True(!missing.Success);
+    Equal(0, fixture.Display.SetCalls.Count);
+    Equal(0, fixture.Launcher.LaunchCount);
 }
 
 static void AutostartUsesVerifiedQuotedCommand()
@@ -450,19 +607,81 @@ sealed class MonitorFixture
     };
 }
 
+sealed class LaunchFixture
+{
+    public DateTime Now { get; } = new(2026, 9, 13, 10, 0, 0, DateTimeKind.Utc);
+    public string Path { get; } = ProcessMatcher.CanonicalizePath(@"C:\Games\game.exe");
+    public DisplayMode Original { get; } = CreateMode(1920, 1080, 60);
+    public DisplayMode Target { get; } = CreateMode(1280, 720, 60);
+    public ConcurrentDictionary<string, DisplayMode> Profiles { get; }
+    public FakeDisplay Display { get; }
+    public FakeProcesses Processes { get; } = new();
+    public FakeLauncher Launcher { get; }
+    public ProfileMonitor Monitor { get; }
+
+    public LaunchFixture(Func<string, bool>? fileExists = null)
+    {
+        Display = new FakeDisplay { Current = Original };
+        Launcher = new FakeLauncher(new ProcessIdentity(42, DateTime.UnixEpoch.AddHours(1), Path));
+        Profiles = new ConcurrentDictionary<string, DisplayMode>(StringComparer.OrdinalIgnoreCase) { [Path] = Target };
+        Monitor = new ProfileMonitor(
+            Profiles,
+            Display,
+            Processes,
+            TimeSpan.FromSeconds(5),
+            TimeSpan.FromSeconds(5),
+            Launcher,
+            fileExists ?? (_ => true));
+    }
+
+    private static DisplayMode CreateMode(uint width, uint height, uint frequency) => new()
+    {
+        Width = width,
+        Height = height,
+        Frequency = frequency,
+        Label = $"{width}x{height} @ {frequency}Hz"
+    };
+}
+
 sealed class FakeDisplay : IDisplayService
 {
     public DisplayMode? Current { get; set; }
     public Queue<OperationResult> Results { get; } = new();
     public List<DisplayMode> SetCalls { get; } = new();
+    public Action<DisplayMode>? OnSet { get; set; }
     public DisplayMode? GetCurrentDisplayMode() => Current;
     public OperationResult SetDisplayMode(DisplayMode mode)
     {
         SetCalls.Add(mode);
+        OnSet?.Invoke(mode);
         var result = Results.Count > 0 ? Results.Dequeue() : OperationResult.Ok();
         if (result.Success) Current = mode;
         return result;
     }
+}
+
+sealed class FakeLauncher(ProcessIdentity identity) : IApplicationLauncher
+{
+    public ProcessIdentity Identity { get; set; } = identity;
+    public string? Error { get; set; }
+    public int LaunchCount { get; private set; }
+    public Action<string>? OnLaunch { get; set; }
+    public FakeLaunchedApplication? LastHandle { get; private set; }
+
+    public ILaunchedApplication Launch(string executablePath)
+    {
+        LaunchCount++;
+        OnLaunch?.Invoke(executablePath);
+        if (Error is not null) throw new InvalidOperationException(Error);
+        return LastHandle = new FakeLaunchedApplication(Identity);
+    }
+}
+
+sealed class FakeLaunchedApplication(ProcessIdentity identity) : ILaunchedApplication
+{
+    public ProcessIdentity Identity { get; } = identity;
+    public bool Disposed { get; private set; }
+    public void Dispose() => Disposed = true;
 }
 
 sealed class FakeProcesses : IProcessProvider

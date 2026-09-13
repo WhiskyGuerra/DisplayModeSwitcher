@@ -9,18 +9,21 @@ namespace DisplayModeSwitcher
     public class ProfileManagerForm : Form
     {
         private readonly ProfileStore _store;
+        private readonly ProfileManager _profileManager;
         private readonly ComboBox _processBox;
         private readonly ComboBox _modeBox;
         private readonly Button _addButton;
         private readonly Button _removeButton;
         private readonly Button _browseButton;
         private readonly Button _newButton;
+        private readonly Button _launchButton;
         private readonly ListBox _profileList;
         private readonly IProcessProvider _processProvider;
         private readonly CheckBox _showAllProcesses;
         private readonly Label _editStateLabel;
         private int _processLoadVersion;
         private bool _isClosing;
+        private bool _launchInProgress;
         private string? _editingProcessKey;
         private string? _preferredProcessPath;
 
@@ -33,14 +36,15 @@ namespace DisplayModeSwitcher
             public override string ToString() => $"{Presentation} → {Mode.Width}x{Mode.Height}@{Mode.Frequency}Hz" + (IsMissingExecutable ? " — Datei fehlt" : string.Empty);
         }
 
-        public ProfileManagerForm(ProfileStore store, IProcessProvider? processProvider = null)
+        public ProfileManagerForm(ProfileStore store, ProfileManager profileManager, IProcessProvider? processProvider = null)
         {
             _store = store;
+            _profileManager = profileManager;
             _processProvider = processProvider ?? new SystemProcessProvider();
 
             Text = "Profile verwalten";
             Width = 660;
-            Height = 370;
+            Height = 405;
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
             MinimizeBox = false;
@@ -52,16 +56,18 @@ namespace DisplayModeSwitcher
             _addButton = new Button { Text = "Profil speichern", Left = 125, Top = 70, Width = 110 };
             _newButton = new Button { Text = "Neu", Left = 245, Top = 70, Width = 80 };
             _removeButton = new Button { Text = "Entfernen", Left = 335, Top = 70, Width = 100 };
+            _launchButton = new Button { Text = "Im Profilmodus starten", Left = 445, Top = 70, Width = 185, Enabled = false };
             _editStateLabel = new Label { Text = "Neues Profil", Left = 10, Top = 103, AutoSize = true };
-            _profileList = new ListBox { Left = 10, Top = 128, Width = 620, Height = 190, HorizontalScrollbar = true };
+            _profileList = new ListBox { Left = 10, Top = 128, Width = 620, Height = 225, HorizontalScrollbar = true };
 
-            Controls.AddRange(new Control[] { _processBox, _modeBox, _showAllProcesses, _browseButton, _addButton, _newButton, _removeButton, _editStateLabel, _profileList });
+            Controls.AddRange(new Control[] { _processBox, _modeBox, _showAllProcesses, _browseButton, _addButton, _newButton, _removeButton, _launchButton, _editStateLabel, _profileList });
 
             Load += ProfileManagerForm_Load;
             _addButton.Click += OnAdd;
             _removeButton.Click += OnRemove;
             _browseButton.Click += OnBrowse;
             _newButton.Click += (_, _) => StartNewProfile();
+            _launchButton.Click += OnLaunch;
             _profileList.SelectedIndexChanged += (_, _) => BeginEditingSelectedProfile();
             _profileList.DoubleClick += (_, _) => BeginEditingSelectedProfile();
             _processBox.SelectedIndexChanged += (_, _) => _preferredProcessPath = (_processBox.SelectedItem as ProcessPresentationItem)?.Path;
@@ -138,6 +144,7 @@ namespace DisplayModeSwitcher
             {
                 _profileList.Items.Add(new ProfileListItem { ProcessKey = kvp.Key, Presentation = ProcessPresentation.CreateProfileItem(kvp.Key), Mode = kvp.Value, IsMissingExecutable = ProcessPresentation.IsMissingProfileExecutable(kvp.Key) });
             }
+            UpdateLaunchButton();
         }
 
         private void OnAdd(object? sender, EventArgs e)
@@ -184,12 +191,16 @@ namespace DisplayModeSwitcher
         private void BeginEditingSelectedProfile()
         {
             if (_profileList.SelectedItem is not ProfileListItem item)
+            {
+                UpdateLaunchButton();
                 return;
+            }
             _editingProcessKey = item.ProcessKey;
             _editStateLabel.Text = "Profil bearbeiten";
             _addButton.Text = "Profil aktualisieren";
             SelectProcessPath(item.ProcessKey);
             SelectMode(item.Mode);
+            UpdateLaunchButton();
         }
 
         private void StartNewProfile()
@@ -198,6 +209,40 @@ namespace DisplayModeSwitcher
             _editStateLabel.Text = "Neues Profil";
             _addButton.Text = "Profil speichern";
             _profileList.ClearSelected();
+            UpdateLaunchButton();
+        }
+
+        private async void OnLaunch(object? sender, EventArgs e)
+        {
+            if (_launchInProgress || _profileList.SelectedItem is not ProfileListItem item)
+                return;
+
+            _launchInProgress = true;
+            UpdateLaunchButton();
+            try
+            {
+                var result = await _profileManager.LaunchProfileApplicationAsync(item.ProcessKey);
+                if (!result.Success && !_isClosing && !IsDisposed)
+                    MessageBox.Show(this, result.Error ?? "Die Anwendung konnte nicht im Profilmodus gestartet werden.", "Profilstart", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            catch (ObjectDisposedException)
+            {
+                if (!_isClosing && !IsDisposed)
+                    MessageBox.Show(this, "Die Profilüberwachung wurde bereits beendet.", "Profilstart", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            finally
+            {
+                _launchInProgress = false;
+                if (!_isClosing && !IsDisposed)
+                    UpdateLaunchButton();
+            }
+        }
+
+        private void UpdateLaunchButton()
+        {
+            var item = _profileList.SelectedItem as ProfileListItem;
+            _launchButton.Enabled = !_launchInProgress && item is not null &&
+                Path.IsPathFullyQualified(item.ProcessKey) && !item.IsMissingExecutable;
         }
 
         private void SelectProcessPath(string path)
