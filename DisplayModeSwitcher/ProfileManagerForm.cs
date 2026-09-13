@@ -13,18 +13,24 @@ namespace DisplayModeSwitcher
         private readonly ComboBox _modeBox;
         private readonly Button _addButton;
         private readonly Button _removeButton;
+        private readonly Button _browseButton;
+        private readonly Button _newButton;
         private readonly ListBox _profileList;
         private readonly IProcessProvider _processProvider;
         private readonly CheckBox _showAllProcesses;
+        private readonly Label _editStateLabel;
         private int _processLoadVersion;
         private bool _isClosing;
+        private string? _editingProcessKey;
+        private string? _preferredProcessPath;
 
         private sealed class ProfileListItem
         {
             public string ProcessKey { get; set; } = string.Empty;
             public ProcessPresentationItem Presentation { get; set; } = new(string.Empty, string.Empty, string.Empty);
             public DisplayMode Mode { get; set; } = new DisplayMode();
-            public override string ToString() => $"{Presentation} → {Mode.Width}x{Mode.Height}@{Mode.Frequency}Hz";
+            public bool IsMissingExecutable { get; set; }
+            public override string ToString() => $"{Presentation} → {Mode.Width}x{Mode.Height}@{Mode.Frequency}Hz" + (IsMissingExecutable ? " — Datei fehlt" : string.Empty);
         }
 
         public ProfileManagerForm(ProfileStore store, IProcessProvider? processProvider = null)
@@ -34,7 +40,7 @@ namespace DisplayModeSwitcher
 
             Text = "Profile verwalten";
             Width = 660;
-            Height = 340;
+            Height = 370;
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
             MinimizeBox = false;
@@ -42,15 +48,23 @@ namespace DisplayModeSwitcher
             _processBox = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Left = 10, Top = 10, Width = 360 };
             _modeBox = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Left = 380, Top = 10, Width = 250 };
             _showAllProcesses = new CheckBox { Text = "Alle Prozesse anzeigen", Left = 10, Top = 43, AutoSize = true };
-            _addButton = new Button { Text = "Speichern", Left = 10, Top = 70, Width = 100 };
-            _removeButton = new Button { Text = "Entfernen", Left = 120, Top = 70, Width = 100 };
-            _profileList = new ListBox { Left = 10, Top = 110, Width = 620, Height = 180, HorizontalScrollbar = true };
+            _browseButton = new Button { Text = "Durchsuchen…", Left = 10, Top = 70, Width = 105 };
+            _addButton = new Button { Text = "Profil speichern", Left = 125, Top = 70, Width = 110 };
+            _newButton = new Button { Text = "Neu", Left = 245, Top = 70, Width = 80 };
+            _removeButton = new Button { Text = "Entfernen", Left = 335, Top = 70, Width = 100 };
+            _editStateLabel = new Label { Text = "Neues Profil", Left = 10, Top = 103, AutoSize = true };
+            _profileList = new ListBox { Left = 10, Top = 128, Width = 620, Height = 190, HorizontalScrollbar = true };
 
-            Controls.AddRange(new Control[] { _processBox, _modeBox, _showAllProcesses, _addButton, _removeButton, _profileList });
+            Controls.AddRange(new Control[] { _processBox, _modeBox, _showAllProcesses, _browseButton, _addButton, _newButton, _removeButton, _editStateLabel, _profileList });
 
             Load += ProfileManagerForm_Load;
             _addButton.Click += OnAdd;
             _removeButton.Click += OnRemove;
+            _browseButton.Click += OnBrowse;
+            _newButton.Click += (_, _) => StartNewProfile();
+            _profileList.SelectedIndexChanged += (_, _) => BeginEditingSelectedProfile();
+            _profileList.DoubleClick += (_, _) => BeginEditingSelectedProfile();
+            _processBox.SelectedIndexChanged += (_, _) => _preferredProcessPath = (_processBox.SelectedItem as ProcessPresentationItem)?.Path;
             _showAllProcesses.CheckedChanged += (_, _) => RefreshProcesses();
             FormClosing += (_, _) => { _isClosing = true; _processLoadVersion++; };
         }
@@ -64,9 +78,9 @@ namespace DisplayModeSwitcher
 
         private void RefreshProcesses()
         {
-            _processBox.Items.Clear();
             var loadVersion = ++_processLoadVersion;
             var includeBackgroundProcesses = _showAllProcesses.Checked;
+            var requestedPath = _preferredProcessPath ?? (_processBox.SelectedItem as ProcessPresentationItem)?.Path;
             Task.Run(() =>
             {
                 var processes = _processProvider.GetCurrentSessionProcesses()
@@ -80,10 +94,15 @@ namespace DisplayModeSwitcher
                 {
                     if (_isClosing || IsDisposed || loadVersion != _processLoadVersion)
                         return;
-                    foreach (var item in list)
+                    var items = list.ToList();
+                    if (!string.IsNullOrWhiteSpace(requestedPath) && !items.Any(item => string.Equals(item.Path, requestedPath, StringComparison.OrdinalIgnoreCase)))
+                        items.Add(ProcessPresentation.CreateProfileItem(requestedPath));
+
+                    _processBox.Items.Clear();
+                    foreach (var item in items)
                         _processBox.Items.Add(item);
-                    if (_processBox.Items.Count > 0)
-                        _processBox.SelectedIndex = 0;
+                    var selected = items.FindIndex(item => string.Equals(item.Path, requestedPath, StringComparison.OrdinalIgnoreCase));
+                    _processBox.SelectedIndex = selected >= 0 ? selected : _processBox.Items.Count > 0 ? 0 : -1;
                 })); }
                 catch (InvalidOperationException) { }
             });
@@ -117,7 +136,7 @@ namespace DisplayModeSwitcher
             _profileList.Items.Clear();
             foreach (var kvp in _store.Profiles)
             {
-                _profileList.Items.Add(new ProfileListItem { ProcessKey = kvp.Key, Presentation = ProcessPresentation.CreateProfileItem(kvp.Key), Mode = kvp.Value });
+                _profileList.Items.Add(new ProfileListItem { ProcessKey = kvp.Key, Presentation = ProcessPresentation.CreateProfileItem(kvp.Key), Mode = kvp.Value, IsMissingExecutable = ProcessPresentation.IsMissingProfileExecutable(kvp.Key) });
             }
         }
 
@@ -127,18 +146,76 @@ namespace DisplayModeSwitcher
                 _modeBox.SelectedItem is not DisplayMode mode)
                 return;
             var process = processItem.Path;
-            var hadPrevious = _store.Profiles.TryGetValue(process, out var previous);
-            _store.Profiles[process] = mode;
-            var result = _store.Save();
+            var result = ProfileEditWorkflow.Save(_store, _editingProcessKey, process, mode);
             if (!result.Success)
             {
-                if (hadPrevious && previous is not null)
-                    _store.Profiles[process] = previous;
-                else
-                    _store.Profiles.TryRemove(process, out _);
                 MessageBox.Show(result.Error ?? "Das Profil konnte nicht gespeichert werden.", "Profile", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
+            else
+                StartNewProfile();
             RefreshProfileList();
+        }
+
+        private void OnBrowse(object? sender, EventArgs e)
+        {
+            using var dialog = new OpenFileDialog
+            {
+                Filter = "Anwendungen (*.exe)|*.exe",
+                DefaultExt = "exe",
+                CheckFileExists = true,
+                CheckPathExists = true,
+                Multiselect = false,
+                Title = "Anwendung für Profil auswählen"
+            };
+            var selectedPath = (_processBox.SelectedItem as ProcessPresentationItem)?.Path;
+            if (!string.IsNullOrWhiteSpace(selectedPath) && Path.IsPathFullyQualified(selectedPath))
+            {
+                var directory = Path.GetDirectoryName(selectedPath);
+                if (!string.IsNullOrWhiteSpace(directory) && Directory.Exists(directory)) dialog.InitialDirectory = directory;
+            }
+            if (string.IsNullOrWhiteSpace(dialog.InitialDirectory))
+                dialog.InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+            if (dialog.ShowDialog(this) != DialogResult.OK)
+                return;
+
+            SelectProcessPath(ProcessMatcher.CanonicalizePath(dialog.FileName));
+        }
+
+        private void BeginEditingSelectedProfile()
+        {
+            if (_profileList.SelectedItem is not ProfileListItem item)
+                return;
+            _editingProcessKey = item.ProcessKey;
+            _editStateLabel.Text = "Profil bearbeiten";
+            _addButton.Text = "Profil aktualisieren";
+            SelectProcessPath(item.ProcessKey);
+            SelectMode(item.Mode);
+        }
+
+        private void StartNewProfile()
+        {
+            _editingProcessKey = null;
+            _editStateLabel.Text = "Neues Profil";
+            _addButton.Text = "Profil speichern";
+            _profileList.ClearSelected();
+        }
+
+        private void SelectProcessPath(string path)
+        {
+            _preferredProcessPath = path;
+            var item = _processBox.Items.OfType<ProcessPresentationItem>().FirstOrDefault(candidate => string.Equals(candidate.Path, path, StringComparison.OrdinalIgnoreCase));
+            if (item is null)
+            {
+                item = ProcessPresentation.CreateProfileItem(path);
+                _processBox.Items.Add(item);
+            }
+            _processBox.SelectedItem = item;
+        }
+
+        private void SelectMode(DisplayMode mode)
+        {
+            var item = _modeBox.Items.OfType<DisplayMode>().FirstOrDefault(candidate => candidate.Width == mode.Width && candidate.Height == mode.Height && candidate.Frequency == mode.Frequency);
+            if (item is not null) _modeBox.SelectedItem = item;
         }
 
         private void OnRemove(object? sender, EventArgs e)

@@ -20,7 +20,10 @@ var tests = new (string Name, Action Run)[]
     ("Generische Metadaten fallen auf Fenstertitel zurück", GenericMetadataFallsBackToWindowTitle),
     ("Steam-Manifeste liefern Spielnamen robust", SteamManifestNamesAreResolved),
     ("Installationsordner ist der letzte Namensfallback", InstallationFolderIsFallback),
-    ("Windows-Hosts und eigene Instanzen werden gefiltert", WindowsHostsAndToolAreFiltered)
+    ("Windows-Hosts und eigene Instanzen werden gefiltert", WindowsHostsAndToolAreFiltered),
+    ("Profilbearbeitung aktualisiert und verschiebt Profile", ProfileEditingUpdatesAndMovesProfile),
+    ("Profilbearbeitung wechselt Schlüssel mit Rückrollschutz", ProfileEditingRollsBackOnSaveFailure),
+    ("Fehlende EXE und Legacy-Profile werden korrekt unterschieden", MissingExecutableDoesNotFlagLegacyProfile)
 };
 
 var failures = new List<string>();
@@ -316,6 +319,55 @@ static void WindowsHostsAndToolAreFiltered()
     Equal(2, all.Count);
     True(all.Any(item => item.Path == host));
     True(!all.Any(item => item.Path == toolElsewhere));
+}
+
+static void ProfileEditingRollsBackOnSaveFailure()
+{
+    WithTemporaryDirectory(directory =>
+    {
+        var blockedDirectory = Path.Combine(directory, "blockiert");
+        File.WriteAllText(blockedDirectory, "keine Verzeichnis");
+        var store = new ProfileStore(Path.Combine(blockedDirectory, "profiles.json"));
+        var originalKey = @"C:\Games\old.exe";
+        var newKey = @"D:\Games\new.exe";
+        var originalMode = Mode(1920, 1080, 60);
+        store.Profiles[originalKey] = originalMode;
+
+        var result = ProfileEditWorkflow.Save(store, originalKey, newKey, Mode(2560, 1440, 144));
+
+        True(!result.Success);
+        Equal(1, store.Profiles.Count);
+        True(store.Profiles.TryGetValue(originalKey, out var restored));
+        Equal(originalMode, restored);
+        True(!store.Profiles.ContainsKey(newKey));
+    });
+}
+
+static void ProfileEditingUpdatesAndMovesProfile()
+{
+    WithTemporaryDirectory(directory =>
+    {
+        var store = new ProfileStore(Path.Combine(directory, "profiles.json"));
+        var originalKey = @"C:\Games\old.exe";
+        var newKey = @"D:\Games\new.exe";
+        store.Profiles[originalKey] = Mode(1920, 1080, 60);
+
+        True(ProfileEditWorkflow.Save(store, originalKey, newKey, Mode(2560, 1440, 144)).Success);
+        Equal(1, store.Profiles.Count);
+        True(!store.Profiles.ContainsKey(originalKey));
+        True(store.Profiles.TryGetValue(newKey, out var saved));
+        Equal(Mode(2560, 1440, 144), saved);
+
+        True(ProfileEditWorkflow.Save(store, newKey, newKey, Mode(1920, 1080, 120)).Success);
+        Equal(1, store.Profiles.Count);
+        Equal(Mode(1920, 1080, 120), store.Profiles[newKey]);
+    });
+}
+
+static void MissingExecutableDoesNotFlagLegacyProfile()
+{
+    True(ProcessPresentation.IsMissingProfileExecutable(@"C:\nicht-vorhanden\game.exe", _ => false));
+    True(!ProcessPresentation.IsMissingProfileExecutable("game.exe", _ => false));
 }
 
 static DisplayMode Mode(uint width, uint height, uint frequency) => new()

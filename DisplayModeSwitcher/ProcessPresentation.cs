@@ -50,6 +50,15 @@ public static class ProcessPresentation
         return new(profileKey, name, executableName);
     }
 
+    public static bool IsMissingProfileExecutable(string profileKey, Func<string, bool>? fileExists = null)
+    {
+        if (!Path.IsPathFullyQualified(profileKey))
+            return false;
+
+        try { return !(fileExists ?? File.Exists)(profileKey); }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException) { return false; }
+    }
+
     public static string GetFriendlyNameFromFile(string executableName, string? mainWindowTitle, FileVersionInfo? versionInfo) => GetFriendlyName(executableName, versionInfo?.ProductName, versionInfo?.FileDescription, mainWindowTitle);
 
     public static string GetFriendlyName(string executableName, string? productName, string? fileDescription, string? mainWindowTitle, string? steamGameName = null, string? installationFolderName = null)
