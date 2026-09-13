@@ -102,13 +102,21 @@ Dateifehler.
 
 ## Grenzen und Sicherheitsverhalten
 
+- Eine neue interne Windows-Schicht kann die aktive Topologie bereits
+  ausschließlich lesend erfassen: physische Monitor-Gerätepfade und die von
+  Windows gelieferten Friendly Names werden dabei getrennt von der aktuellen
+  `DISPLAYx`-Zuordnung, Primärstatus, Anschluss und Position gehalten. Auch die
+  aktuellen und verfügbaren Modi können pro exakter Anzeigequelle gelesen
+  werden. Die Erkennung ist noch nicht an die Oberfläche oder an einen neuen
+  Schaltpfad angebunden und stellt daher noch keine fertige
+  Multi-Monitor-Unterstützung dar.
 - Die Laufzeit und die aktuelle Profiloberfläche berücksichtigen in diesem
   Zwischenstand weiterhin ausschließlich genau ein Ziel für den Primärmonitor.
   Bereits gespeicherte spezifische oder mehrere Monitorziele werden angezeigt
   und bewahrt, aber weder ausgeführt noch in der Oberfläche bearbeitet. Ein
   kontrollierter oder automatischer Start wird für solche Profile ohne
-  Display- oder Startaktion abgelehnt. Monitorerkennung, Neuverknüpfung und
-  gezielte Schreibaufrufe folgen in späteren Checkpoints.
+  Display- oder Startaktion abgelehnt. Oberflächenintegration, manuelle
+  Neuverknüpfung und gezielte Schreibaufrufe folgen in späteren Checkpoints.
 - Geschützte oder bereits beendete Prozesse können nicht als Profil verwendet
   werden.
 - Epic, GOG und sonstige Launcher werden derzeit nicht eigens erkannt. Sie

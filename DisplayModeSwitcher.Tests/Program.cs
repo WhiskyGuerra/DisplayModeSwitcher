@@ -67,7 +67,21 @@ var tests = new (string Name, Action Run)[]
     ("Wiederherstellung vermeidet tolerierbare Hertz-Wechsel", RestoreUsesFrequencyTolerance),
     ("Abweichungsdiagnose enthält Modus, Richtlinie und Nachsetzung", DeviationDiagnosticsAreComplete),
     ("Steam-Wartephase bleibt aktiv und startet danach die Profilrichtlinie", SteamPendingAndActivePolicyAreSeparated),
-    ("Direktstart beginnt die Startphase beim erfolgreichen Start", DirectLaunchStartsPolicyWindowImmediately)
+    ("Direktstart beginnt die Startphase beim erfolgreichen Start", DirectLaunchStartsPolicyWindowImmediately),
+    ("Topologie ordnet physische Monitore ihren aktuellen Quellen zu", TopologyMapsPhysicalTargetsToSources),
+    ("Topologieabfrage wiederholt nach unzureichendem Puffer vollständig", TopologyRetriesWholeQueryAfterInsufficientBuffer),
+    ("Specific-Matching verwendet ausschließlich den stabilen Gerätepfad", SpecificMatchingUsesOnlyPersistentPath),
+    ("Fehlende und doppelte Gerätepfade werden fail-safe behandelt", MissingAndDuplicatePathsFailSafe),
+    ("Primärmonitor muss genau einmal und ohne Klon-Gruppe vorkommen", PrimaryMatchingIsFailSafe),
+    ("GDI-Neuordnung wird mit jedem Snapshot frisch ermittelt", GdiReorderUsesFreshSnapshot),
+    ("Monitor ohne Gerätepfad bleibt sichtbar aber nicht persistierbar", EmptyDevicePathIsVisibleButUnpersistable),
+    ("Klon-Quellen blockieren Primary- und Specific-Auflösung", CloneSourcesAreRejected),
+    ("Virtuelle Klon-Gruppen ohne Quellmodus werden blockiert", VirtualCloneGroupsAreRejected),
+    ("Monitorbeschriftungen verwenden Windows-Namen und ehrliche Fallbacks", EndpointLabelsUseWindowsNamesAndFallbacks),
+    ("Moduslisten lesen nur die Quelle des gewählten Monitors", AvailableModesReadOnlySelectedSource),
+    ("Moduslisten deduplizieren die vollständige Modusidentität", AvailableModesDeduplicateFullIdentity),
+    ("Native Display-Strukturen entsprechen den Win32-Größen und Offsets", NativeDisplayStructLayoutsMatchWin32),
+    ("Topologiesnapshots sind unveränderlich und führen keine Schreibaktion aus", TopologySnapshotsAreImmutableAndReadOnly)
 };
 
 var failures = new List<string>();
@@ -1255,6 +1269,261 @@ static void DirectLaunchStartsPolicyWindowImmediately()
     True(fixture.Monitor.Status.LastResult?.Contains("30-Sekunden", StringComparison.Ordinal) == true);
 }
 
+static void TopologyMapsPhysicalTargetsToSources()
+{
+    var api = TwoMonitorDisplayApi();
+    var result = new WindowsDisplayTopologyService(api).GetSnapshot();
+
+    True(result.Success, result.Error?.Message);
+    Equal(2, result.Value!.Endpoints.Count);
+    var samsung = result.Value.Endpoints.Single(endpoint => endpoint.FriendlyName == "C49HG9x");
+    Equal(@"\\?\DISPLAY#SAM0F9C#A", samsung.MonitorDevicePath);
+    Equal(@"\\.\DISPLAY1", samsung.GdiSourceName);
+    Equal((ushort)0x4c2d, samsung.EdidManufacturerId);
+    Equal((ushort)0x0f9c, samsung.EdidProductCodeId);
+    Equal(DisplayOutputTechnology.DisplayPortExternal, samsung.OutputTechnology);
+    Equal((uint)2, samsung.ConnectorInstance);
+    True(samsung.IsPrimary);
+    Equal(new DisplayPoint(0, 0), samsung.Position);
+    Equal((uint)3840, samsung.CurrentMode!.Width);
+
+    var other = result.Value.Endpoints.Single(endpoint => endpoint.FriendlyName == "Office Monitor");
+    Equal(@"\\.\DISPLAY2", other.GdiSourceName);
+    True(!other.IsPrimary);
+    Equal(new DisplayPoint(3840, 0), other.Position);
+    Equal(0, api.MutationCalls);
+}
+
+static void TopologyRetriesWholeQueryAfterInsufficientBuffer()
+{
+    var api = TwoMonitorDisplayApi();
+    api.InsufficientQueryCount = 1;
+
+    var result = new WindowsDisplayTopologyService(api).GetSnapshot();
+
+    True(result.Success, result.Error?.Message);
+    Equal(2, api.SizeCalls);
+    Equal(2, api.QueryCalls);
+    Equal((uint)(WindowsDisplayTopologyService.QueryOnlyActivePaths | WindowsDisplayTopologyService.QueryVirtualModeAware), api.LastFlags);
+}
+
+static void SpecificMatchingUsesOnlyPersistentPath()
+{
+    var first = Endpoint(@"\\?\DISPLAY#SAM1234#ONE", "Same Name", @"\\.\DISPLAY1", isPrimary: true, manufacturer: 0x4c2d, product: 0x1234);
+    var second = Endpoint(@"\\?\DISPLAY#SAM1234#TWO", "Same Name", @"\\.\DISPLAY2", manufacturer: 0x4c2d, product: 0x1234);
+    var snapshot = new DisplayTopologySnapshot([first, second]);
+
+    var exact = MonitorSelectorMatcher.Resolve(snapshot, new SpecificMonitor(
+        @"\\?\display#sam1234#two",
+        "falscher alter Name",
+        "anders",
+        "anders"));
+    Equal(MonitorMatchStatus.Exact, exact.Status);
+    Equal(second.TargetIdentity, exact.Endpoint!.TargetIdentity);
+
+    var noFriendlyFallback = MonitorSelectorMatcher.Resolve(snapshot, new SpecificMonitor(
+        @"\\?\DISPLAY#NICHT#DA",
+        "Same Name",
+        "4C2D",
+        "1234"));
+    Equal(MonitorMatchStatus.Missing, noFriendlyFallback.Status);
+}
+
+static void MissingAndDuplicatePathsFailSafe()
+{
+    var endpoint = Endpoint(@"\\?\DISPLAY#SAM0F9C#A", "C49HG9x", @"\\.\DISPLAY1", isPrimary: true);
+    var selector = new SpecificMonitor(@"\\?\display#sam0f9c#a", "C49HG9x");
+
+    Equal(MonitorMatchStatus.Missing, MonitorSelectorMatcher.Resolve(new DisplayTopologySnapshot([]), selector).Status);
+    Equal(MonitorMatchStatus.Ambiguous, MonitorSelectorMatcher.Resolve(
+        new DisplayTopologySnapshot([endpoint, endpoint with { TargetIdentity = new DisplayTargetIdentity(new DisplayAdapterId(1), 99) }]),
+        selector).Status);
+    Equal(MonitorMatchStatus.Unpersistable, MonitorSelectorMatcher.Resolve(
+        new DisplayTopologySnapshot([endpoint]),
+        new SpecificMonitor("   ", "C49HG9x")).Status);
+}
+
+static void PrimaryMatchingIsFailSafe()
+{
+    var first = Endpoint("path-a", "A", @"\\.\DISPLAY1", isPrimary: true);
+    var second = Endpoint("path-b", "B", @"\\.\DISPLAY2", isPrimary: true, sourceId: 2, targetId: 2);
+
+    Equal(MonitorMatchStatus.Missing, MonitorSelectorMatcher.Resolve(
+        new DisplayTopologySnapshot([first with { IsPrimary = false }]), new PrimaryMonitor()).Status);
+    Equal(MonitorMatchStatus.Ambiguous, MonitorSelectorMatcher.Resolve(
+        new DisplayTopologySnapshot([first, second]), new PrimaryMonitor()).Status);
+    var exact = MonitorSelectorMatcher.Resolve(new DisplayTopologySnapshot([first]), new PrimaryMonitor());
+    Equal(MonitorMatchStatus.Exact, exact.Status);
+    Equal(first.TargetIdentity, exact.Endpoint!.TargetIdentity);
+}
+
+static void GdiReorderUsesFreshSnapshot()
+{
+    var api = TwoMonitorDisplayApi();
+    var service = new WindowsDisplayTopologyService(api);
+    var selector = new SpecificMonitor(@"\\?\DISPLAY#SAM0F9C#A", "C49HG9x");
+    var before = service.GetSnapshot().Value!;
+    Equal(@"\\.\DISPLAY1", MonitorSelectorMatcher.Resolve(before, selector).Endpoint!.GdiSourceName);
+
+    api.SourceNames[new DisplaySourceIdentity(new DisplayAdapterId(1), 1)] = @"\\.\DISPLAY3";
+    api.PrimarySources.Clear();
+    api.PrimarySources.Add(@"\\.\DISPLAY3");
+    api.CurrentModes[@"\\.\DISPLAY3"] = new EndpointDisplayMode(5120, 1440, 120, 32, 0, DisplayOrientation.Default, 0);
+    var after = service.GetSnapshot().Value!;
+
+    Equal(@"\\.\DISPLAY3", MonitorSelectorMatcher.Resolve(after, selector).Endpoint!.GdiSourceName);
+    Equal(@"\\.\DISPLAY1", MonitorSelectorMatcher.Resolve(before, selector).Endpoint!.GdiSourceName);
+    True(!ReferenceEquals(before, after));
+}
+
+static void EmptyDevicePathIsVisibleButUnpersistable()
+{
+    var endpoint = Endpoint(string.Empty, "Projector", @"\\.\DISPLAY4");
+    var snapshot = new DisplayTopologySnapshot([endpoint]);
+
+    Equal(1, snapshot.Endpoints.Count);
+    True(!snapshot.Endpoints[0].IsPersistable);
+    Equal(MonitorMatchStatus.Unpersistable, MonitorSelectorMatcher.CreateSpecificSelection(endpoint).Status);
+    Equal(MonitorMatchStatus.Missing, MonitorSelectorMatcher.Resolve(
+        snapshot,
+        new SpecificMonitor("Projector", "Projector")).Status);
+}
+
+static void CloneSourcesAreRejected()
+{
+    var api = TwoMonitorDisplayApi();
+    api.Paths =
+    [
+        api.Paths[0],
+        api.Paths[1] with { SourceIdentity = api.Paths[0].SourceIdentity, SourceModeInfoIndex = api.Paths[0].SourceModeInfoIndex }
+    ];
+    api.SourceNames[api.Paths[0].SourceIdentity] = @"\\.\DISPLAY1";
+    var snapshot = new WindowsDisplayTopologyService(api).GetSnapshot().Value!;
+
+    True(snapshot.Endpoints.All(endpoint => endpoint.IsCloneSource));
+    Equal(MonitorMatchStatus.CloneGroupUnsupported, MonitorSelectorMatcher.Resolve(snapshot, new PrimaryMonitor()).Status);
+    Equal(MonitorMatchStatus.CloneGroupUnsupported, MonitorSelectorMatcher.Resolve(
+        snapshot,
+        new SpecificMonitor(snapshot.Endpoints[1].MonitorDevicePath, snapshot.Endpoints[1].FriendlyName)).Status);
+}
+
+static void VirtualCloneGroupsAreRejected()
+{
+    var api = TwoMonitorDisplayApi();
+    api.Paths =
+    [
+        api.Paths[0] with { SourceModeInfoIndex = null, CloneGroupId = 7 },
+        api.Paths[1] with { SourceModeInfoIndex = null, CloneGroupId = 7 }
+    ];
+
+    var snapshot = new WindowsDisplayTopologyService(api).GetSnapshot().Value!;
+
+    True(snapshot.Endpoints.All(endpoint => endpoint.IsCloneSource));
+    Equal(MonitorMatchStatus.CloneGroupUnsupported, MonitorSelectorMatcher.Resolve(
+        snapshot,
+        new SpecificMonitor(snapshot.Endpoints[0].MonitorDevicePath, snapshot.Endpoints[0].FriendlyName)).Status);
+}
+
+static void EndpointLabelsUseWindowsNamesAndFallbacks()
+{
+    var neo = Endpoint("neo-path", "  Odyssey Neo G9  ", @"\\.\DISPLAY7", isPrimary: true) with
+    {
+        OutputTechnology = DisplayOutputTechnology.Hdmi,
+        Position = new DisplayPoint(-5120, 0),
+        CurrentMode = new EndpointDisplayMode(5120, 1440, 240, 32, 0, DisplayOrientation.Default, 0)
+    };
+    var neoLabel = DisplayEndpointLabel.Format(neo);
+    True(neoLabel.StartsWith("Odyssey Neo G9 (", StringComparison.Ordinal));
+    True(neoLabel.Contains("Primär", StringComparison.Ordinal));
+    True(neoLabel.Contains("HDMI", StringComparison.Ordinal));
+    True(neoLabel.Contains("Anzeige 7", StringComparison.Ordinal));
+    True(neoLabel.Contains("5120x1440", StringComparison.Ordinal));
+    True(neoLabel.Contains("Position -5120/0", StringComparison.Ordinal));
+
+    var edidFallback = DisplayEndpointLabel.Format(Endpoint("path", "", @"\\.\DISPLAY2", manufacturer: 0x4c2d, product: 0x1234));
+    True(edidFallback.StartsWith("Monitor 0x4C2D/0x1234", StringComparison.Ordinal));
+    True(DisplayEndpointLabel.Format(Endpoint("path", "", string.Empty)).StartsWith("Unbekannter Monitor", StringComparison.Ordinal));
+}
+
+static void AvailableModesReadOnlySelectedSource()
+{
+    var api = TwoMonitorDisplayApi();
+    api.AvailableModes[@"\\.\DISPLAY1"] = [new EndpointDisplayMode(3840, 1080, 100, 32, 0, DisplayOrientation.Default, 0)];
+    api.AvailableModes[@"\\.\DISPLAY2"] = [new EndpointDisplayMode(1920, 1080, 60, 32, 0, DisplayOrientation.Default, 0)];
+    var service = new WindowsDisplayTopologyService(api);
+    var endpoint = service.GetSnapshot().Value!.Endpoints.Single(item => item.GdiSourceName == @"\\.\DISPLAY2");
+    api.ModeReadSources.Clear();
+
+    var result = service.GetAvailableModes(endpoint);
+
+    True(result.Success, result.Error?.Message);
+    Equal(1, result.Value!.Count);
+    True(api.ModeReadSources.All(source => source == @"\\.\DISPLAY2"));
+    True(!api.ModeReadSources.Contains(@"\\.\DISPLAY1"));
+    Equal(0, api.MutationCalls);
+}
+
+static void AvailableModesDeduplicateFullIdentity()
+{
+    var api = TwoMonitorDisplayApi();
+    var baseMode = new EndpointDisplayMode(1920, 1080, 60, 32, 0, DisplayOrientation.Default, 0);
+    api.AvailableModes[@"\\.\DISPLAY1"] =
+    [
+        baseMode,
+        baseMode,
+        baseMode with { Orientation = DisplayOrientation.Rotate90 },
+        baseMode with { BitsPerPixel = 24 },
+        baseMode with { DisplayFlags = 2 }
+    ];
+    var endpoint = new WindowsDisplayTopologyService(api).GetSnapshot().Value!.Endpoints[0];
+
+    var modes = new WindowsDisplayTopologyService(api).GetAvailableModes(endpoint).Value!;
+
+    Equal(4, modes.Count);
+    True(modes.Contains(baseMode));
+    True(modes.Contains(baseMode with { Orientation = DisplayOrientation.Rotate90 }));
+}
+
+static void NativeDisplayStructLayoutsMatchWin32()
+{
+    var apiType = typeof(WindowsDisplayApi);
+    Type Nested(string name) => apiType.GetNestedType(
+        name,
+        System.Reflection.BindingFlags.NonPublic) ?? throw new InvalidOperationException($"Native Struktur {name} fehlt.");
+    void Size(string name, int expected) => Equal(expected, System.Runtime.InteropServices.Marshal.SizeOf(Nested(name)));
+
+    Size("Luid", 8);
+    Size("DisplayConfigPathSourceInfo", 20);
+    Size("DisplayConfigPathTargetInfo", 48);
+    Size("DisplayConfigPathInfo", 72);
+    Size("DisplayConfigModeInfo", 64);
+    Size("DisplayConfigDeviceInfoHeader", 20);
+    Size("DisplayConfigTargetDeviceName", 420);
+    Size("DisplayConfigSourceDeviceName", 84);
+    Size("DisplayDevice", 840);
+    Size("DevMode", 220);
+
+    var devMode = Nested("DevMode");
+    Equal(new IntPtr(76), System.Runtime.InteropServices.Marshal.OffsetOf(devMode, "DisplayInfo"));
+    Equal(new IntPtr(168), System.Runtime.InteropServices.Marshal.OffsetOf(devMode, "BitsPerPel"));
+    Equal(new IntPtr(184), System.Runtime.InteropServices.Marshal.OffsetOf(devMode, "DisplayFrequency"));
+    var displayUnion = Nested("DevModeDisplayUnion");
+    Equal(new IntPtr(8), System.Runtime.InteropServices.Marshal.OffsetOf(displayUnion, "DisplayOrientation"));
+    Equal(new IntPtr(12), System.Runtime.InteropServices.Marshal.OffsetOf(displayUnion, "DisplayFixedOutput"));
+}
+
+static void TopologySnapshotsAreImmutableAndReadOnly()
+{
+    var api = TwoMonitorDisplayApi();
+    var snapshot = new WindowsDisplayTopologyService(api).GetSnapshot().Value!;
+
+    True(snapshot.Endpoints is not DisplayEndpoint[]);
+    True(snapshot.Endpoints is not ICollection<DisplayEndpoint> collection || collection.IsReadOnly);
+    Equal(0, api.MutationCalls);
+    Equal(0, api.RegistryWriteCalls);
+    Equal(0, api.FileWriteCalls);
+}
+
 static void InstallationFolderIsFallback()
 {
     Equal("My Game", ProcessPresentation.GetFriendlyName("game.exe", "BootstrapPackagedGame", ".NET", null, null, "My Game"));
@@ -1360,6 +1629,71 @@ static DisplayMode Mode(uint width, uint height, uint frequency) => new()
     Frequency = frequency,
     Label = $"{width}x{height} @ {frequency}Hz"
 };
+
+static DisplayEndpoint Endpoint(
+    string path,
+    string friendlyName,
+    string sourceName,
+    bool isPrimary = false,
+    ushort manufacturer = 0,
+    ushort product = 0,
+    uint sourceId = 1,
+    uint targetId = 1) => new(
+        new DisplayTargetIdentity(new DisplayAdapterId(1), targetId),
+        new DisplaySourceIdentity(new DisplayAdapterId(1), sourceId),
+        path,
+        friendlyName,
+        manufacturer,
+        product,
+        DisplayOutputTechnology.DisplayPortExternal,
+        0,
+        sourceName,
+        isPrimary,
+        new DisplayPoint(0, 0),
+        new EndpointDisplayMode(1920, 1080, 60, 32, 0, DisplayOrientation.Default, 0),
+        false);
+
+static FakeWindowsDisplayApi TwoMonitorDisplayApi()
+{
+    var source1 = new DisplaySourceIdentity(new DisplayAdapterId(1), 1);
+    var source2 = new DisplaySourceIdentity(new DisplayAdapterId(1), 2);
+    var target1 = new DisplayTargetIdentity(new DisplayAdapterId(1), 11);
+    var target2 = new DisplayTargetIdentity(new DisplayAdapterId(1), 12);
+    var api = new FakeWindowsDisplayApi
+    {
+        Paths =
+        [
+            new WindowsDisplayConfigPath(source1, target1, 1, null, DisplayOutputTechnology.DisplayPortExternal),
+            new WindowsDisplayConfigPath(source2, target2, 2, null, DisplayOutputTechnology.Hdmi)
+        ],
+        Modes =
+        [
+            new WindowsDisplayConfigMode(false, default, 0, 0, default),
+            new WindowsDisplayConfigMode(true, source1, 3840, 1080, new DisplayPoint(0, 0)),
+            new WindowsDisplayConfigMode(true, source2, 1920, 1080, new DisplayPoint(3840, 0))
+        ]
+    };
+    api.TargetNames[target1] = new WindowsTargetDeviceName(
+        @"\\?\DISPLAY#SAM0F9C#A",
+        "  C49HG9x  ",
+        0x4c2d,
+        0x0f9c,
+        DisplayOutputTechnology.DisplayPortExternal,
+        2);
+    api.TargetNames[target2] = new WindowsTargetDeviceName(
+        @"\\?\DISPLAY#DEL1234#B",
+        "Office Monitor",
+        0x10ac,
+        0x1234,
+        DisplayOutputTechnology.Hdmi,
+        1);
+    api.SourceNames[source1] = @"\\.\DISPLAY1";
+    api.SourceNames[source2] = @"\\.\DISPLAY2";
+    api.PrimarySources.Add(@"\\.\DISPLAY1");
+    api.CurrentModes[@"\\.\DISPLAY1"] = new EndpointDisplayMode(3840, 1080, 100, 32, 0, DisplayOrientation.Default, 0);
+    api.CurrentModes[@"\\.\DISPLAY2"] = new EndpointDisplayMode(1920, 1080, 60, 32, 0, DisplayOrientation.Default, 0);
+    return api;
+}
 
 static DisplayProfile Profile(DisplayMode mode, ProfileRetentionPolicy policy = ProfileRetentionPolicy.Startup) => new(mode, policy);
 
@@ -1569,4 +1903,112 @@ sealed class FakeAutostartRegistry : IAutostartRegistry
     public OperationResult Read(out string? value) { value = Value; return OperationResult.Ok(); }
     public OperationResult Write(string value) { Value = value; return OperationResult.Ok(); }
     public OperationResult Delete() { Value = null; return OperationResult.Ok(); }
+}
+
+sealed class FakeWindowsDisplayApi : IWindowsDisplayApi
+{
+    public IReadOnlyList<WindowsDisplayConfigPath> Paths { get; set; } = Array.Empty<WindowsDisplayConfigPath>();
+    public IReadOnlyList<WindowsDisplayConfigMode> Modes { get; set; } = Array.Empty<WindowsDisplayConfigMode>();
+    public Dictionary<DisplayTargetIdentity, WindowsTargetDeviceName> TargetNames { get; } = new();
+    public Dictionary<DisplaySourceIdentity, string> SourceNames { get; } = new();
+    public HashSet<string> PrimarySources { get; } = new(StringComparer.OrdinalIgnoreCase);
+    public Dictionary<string, EndpointDisplayMode> CurrentModes { get; } = new(StringComparer.OrdinalIgnoreCase);
+    public Dictionary<string, IReadOnlyList<EndpointDisplayMode>> AvailableModes { get; } = new(StringComparer.OrdinalIgnoreCase);
+    public List<string> ModeReadSources { get; } = new();
+    public int InsufficientQueryCount { get; set; }
+    public int SizeCalls { get; private set; }
+    public int QueryCalls { get; private set; }
+    public uint LastFlags { get; private set; }
+    public int MutationCalls { get; private set; }
+    public int RegistryWriteCalls { get; private set; }
+    public int FileWriteCalls { get; private set; }
+
+    public int GetDisplayConfigBufferSizes(uint flags, out uint pathCount, out uint modeCount)
+    {
+        SizeCalls++;
+        LastFlags = flags;
+        pathCount = checked((uint)Paths.Count);
+        modeCount = checked((uint)Modes.Count);
+        return WindowsDisplayTopologyService.ErrorSuccess;
+    }
+
+    public int QueryDisplayConfig(
+        uint flags,
+        uint pathCapacity,
+        uint modeCapacity,
+        out IReadOnlyList<WindowsDisplayConfigPath> paths,
+        out IReadOnlyList<WindowsDisplayConfigMode> modes)
+    {
+        QueryCalls++;
+        LastFlags = flags;
+        if (InsufficientQueryCount > 0)
+        {
+            InsufficientQueryCount--;
+            paths = Array.Empty<WindowsDisplayConfigPath>();
+            modes = Array.Empty<WindowsDisplayConfigMode>();
+            return WindowsDisplayTopologyService.ErrorInsufficientBuffer;
+        }
+
+        if (pathCapacity < Paths.Count || modeCapacity < Modes.Count)
+        {
+            paths = Array.Empty<WindowsDisplayConfigPath>();
+            modes = Array.Empty<WindowsDisplayConfigMode>();
+            return WindowsDisplayTopologyService.ErrorInsufficientBuffer;
+        }
+
+        paths = Array.AsReadOnly(Paths.ToArray());
+        modes = Array.AsReadOnly(Modes.ToArray());
+        return WindowsDisplayTopologyService.ErrorSuccess;
+    }
+
+    public int GetTargetDeviceName(DisplayTargetIdentity target, out WindowsTargetDeviceName deviceName)
+    {
+        if (TargetNames.TryGetValue(target, out var found))
+        {
+            deviceName = found;
+            return WindowsDisplayTopologyService.ErrorSuccess;
+        }
+
+        deviceName = new WindowsTargetDeviceName(string.Empty, string.Empty, 0, 0, DisplayOutputTechnology.Other, 0);
+        return 1168;
+    }
+
+    public int GetSourceDeviceName(DisplaySourceIdentity source, out string gdiSourceName)
+    {
+        if (SourceNames.TryGetValue(source, out var found))
+        {
+            gdiSourceName = found;
+            return WindowsDisplayTopologyService.ErrorSuccess;
+        }
+
+        gdiSourceName = string.Empty;
+        return 1168;
+    }
+
+    public bool IsPrimarySource(string gdiSourceName) => PrimarySources.Contains(gdiSourceName);
+
+    public int ReadDisplaySettings(string gdiSourceName, int modeNumber, out EndpointDisplayMode? mode)
+    {
+        ModeReadSources.Add(gdiSourceName);
+        if (modeNumber == WindowsDisplayTopologyService.EnumCurrentSettings)
+        {
+            if (CurrentModes.TryGetValue(gdiSourceName, out var current))
+            {
+                mode = current;
+                return WindowsDisplayTopologyService.ErrorSuccess;
+            }
+
+            mode = null;
+            return 31;
+        }
+
+        if (!AvailableModes.TryGetValue(gdiSourceName, out var modes) || modeNumber < 0 || modeNumber >= modes.Count)
+        {
+            mode = null;
+            return WindowsDisplayTopologyService.ErrorNoMoreItems;
+        }
+
+        mode = modes[modeNumber];
+        return WindowsDisplayTopologyService.ErrorSuccess;
+    }
 }
