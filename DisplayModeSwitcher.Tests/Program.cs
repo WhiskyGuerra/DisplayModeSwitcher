@@ -50,6 +50,15 @@ var tests = new (string Name, Action Run)[]
     ("Steam-Restorefehler bleibt zur Wiederholung verwaltet", SteamRestoreFailureRemainsManaged),
     ("Parallele Steam-Starts lösen den URI höchstens einmal aus", ParallelSteamLaunchStartsOnce),
     ("Profilrichtlinien migrieren, speichern und validieren sicher", ProfilePoliciesPersistAndValidate),
+    ("V1-Profile werden als explizites Primärmonitor-Ziel migriert", V1ProfilesMigrateToPrimaryTarget),
+    ("Profile kopieren Monitorziele und Anzeigemodi tief", DisplayProfilesAreDeeplyImmutable),
+    ("V2-Profile schreiben Primär-, Specific- und Mehrmonitorziele verlustfrei", V2ProfilesRoundTripAllTargetKinds),
+    ("Ungültige und unbekannte V2-Daten sperren Laden und Überschreiben", InvalidV2ProfilesAreBlockedTransactionally),
+    ("Ungültige In-Memory-Ziele überschreiben keine gültige Datei", InvalidInMemoryTargetsDoNotOverwrite),
+    ("Mehrmonitor-Workflows rollen vollständige Ziellisten tief zurück", MultiTargetWorkflowRollsBackDeeply),
+    ("Specific- und Mehrmonitorprofile bleiben zur Laufzeit ohne Seiteneffekt", UnsupportedTargetsHaveNoRuntimeSideEffects),
+    ("Die Übergangsoberfläche reduziert keine nicht unterstützten Ziele", CurrentUiWorkflowPreservesUnsupportedTargets),
+    ("Monitoridentitäten vergleichen Gerätepfade ohne Großschreibung", MonitorSelectorIdentityIsCaseInsensitive),
     ("Einmalige Richtlinie setzt während der Laufzeit nicht nach", OncePolicyDoesNotReapply),
     ("Startphasenrichtlinie begrenzt Zeit, Anzahl und Diagnose", StartupPolicyIsBoundedAndQuiet),
     ("Dauerhafte Richtlinie setzt weiterhin rate-limitiert nach", ContinuousPolicyKeepsReapplying),
@@ -814,6 +823,270 @@ static void ProfilePoliciesPersistAndValidate()
     });
 }
 
+static void V1ProfilesMigrateToPrimaryTarget()
+{
+    WithTemporaryDirectory(directory =>
+    {
+        var path = Path.Combine(directory, "profiles.json");
+        File.WriteAllText(path, "[{\"Process\":\"legacy.exe\",\"Width\":1920,\"Height\":1080,\"Frequency\":100}]");
+        var store = new ProfileStore(path);
+
+        var profile = store.Profiles["legacy.exe"];
+        Equal(ProfileRetentionPolicy.Startup, profile.Policy);
+        Equal(1, profile.Targets.Count);
+        True(profile.Targets[0].MonitorSelector is PrimaryMonitor);
+        Equal(Mode(1920, 1080, 100), profile.Targets[0].Mode);
+
+        var json = File.ReadAllText(path);
+        True(json.Contains("\"Version\": 2", StringComparison.Ordinal));
+        True(json.Contains("\"Kind\": \"PrimaryMonitor\"", StringComparison.Ordinal));
+        True(!json.TrimStart().StartsWith("[", StringComparison.Ordinal));
+
+        var unchangedTimestamp = new DateTime(2020, 1, 2, 3, 4, 5, DateTimeKind.Utc);
+        File.SetLastWriteTimeUtc(path, unchangedTimestamp);
+        var secondLoad = new ProfileStore(path);
+        Equal(profile, secondLoad.Profiles["legacy.exe"]);
+        Equal(unchangedTimestamp, File.GetLastWriteTimeUtc(path));
+    });
+}
+
+static void DisplayProfilesAreDeeplyImmutable()
+{
+    var sourceMode = Mode(3840, 1080, 100);
+    var sourceSelector = new SpecificMonitor(@"\\?\DISPLAY#SAM0E16#ONE", "Samsung C49HG9", "SAM", "0E16");
+    var sourceTarget = new DisplayProfileTarget(sourceSelector, sourceMode);
+    var sourceTargets = new List<DisplayProfileTarget> { sourceTarget };
+    var profile = new DisplayProfile(ProfileRetentionPolicy.Startup, sourceTargets);
+
+    sourceTargets.Clear();
+    Equal(1, profile.Targets.Count);
+    True(!ReferenceEquals(sourceTarget, profile.Targets[0]));
+    True(!ReferenceEquals(sourceMode, profile.Targets[0].Mode));
+    True(!ReferenceEquals(sourceSelector, profile.Targets[0].MonitorSelector));
+
+    var copy = profile.DeepCopy();
+    Equal(profile, copy);
+    True(!ReferenceEquals(profile.Targets, copy.Targets));
+    True(!ReferenceEquals(profile.Targets[0], copy.Targets[0]));
+    True(!ReferenceEquals(profile.Targets[0].Mode, copy.Targets[0].Mode));
+    True(!ReferenceEquals(profile.Targets[0].MonitorSelector, copy.Targets[0].MonitorSelector));
+}
+
+static void V2ProfilesRoundTripAllTargetKinds()
+{
+    WithTemporaryDirectory(directory =>
+    {
+        var path = Path.Combine(directory, "profiles.json");
+        var samsung = new SpecificMonitor(@"\\?\DISPLAY#SAM0E16#A&111&0&UID1#{monitor}", "Samsung C49HG9", "SAM", "0E16");
+        var odyssey = new SpecificMonitor(@"\\?\DISPLAY#SAM71AB#B&222&0&UID2#{monitor}", "Odyssey Neo G9", "SAM", "71AB");
+        var store = new ProfileStore(path);
+        store.Profiles["primary.exe"] = Profile(Mode(1920, 1080, 100), ProfileRetentionPolicy.Once);
+        store.Profiles["specific.exe"] = new DisplayProfile(ProfileRetentionPolicy.Startup,
+            [new DisplayProfileTarget(samsung, Mode(3840, 1080, 100))]);
+        store.Profiles["multi.exe"] = new DisplayProfile(ProfileRetentionPolicy.Continuous,
+        [
+            new DisplayProfileTarget(samsung, Mode(3840, 1080, 100)),
+            new DisplayProfileTarget(odyssey, Mode(5120, 1440, 120))
+        ]);
+
+        True(store.Save().Success);
+        var loaded = new ProfileStore(path);
+        Equal(3, loaded.Profiles.Count);
+        True(loaded.Profiles["primary.exe"].Targets[0].MonitorSelector is PrimaryMonitor);
+        var loadedSpecific = (SpecificMonitor)loaded.Profiles["specific.exe"].Targets[0].MonitorSelector;
+        Equal(samsung.MonitorDevicePath, loadedSpecific.MonitorDevicePath);
+        Equal("Samsung C49HG9", loadedSpecific.FriendlyNameSnapshot);
+        Equal("SAM", loadedSpecific.EdidManufacturerId);
+        Equal("0E16", loadedSpecific.EdidProductCodeId);
+        Equal(2, loaded.Profiles["multi.exe"].Targets.Count);
+        Equal(store.Profiles["multi.exe"], loaded.Profiles["multi.exe"]);
+
+        var json = File.ReadAllText(path);
+        True(json.Contains("\"Kind\": \"SpecificMonitor\"", StringComparison.Ordinal));
+        True(json.Contains("\"Policy\": \"Continuous\"", StringComparison.Ordinal));
+        True(json.Contains("Samsung C49HG9", StringComparison.Ordinal));
+    });
+}
+
+static void InvalidV2ProfilesAreBlockedTransactionally()
+{
+    var validPrimaryTarget = "{\"MonitorSelector\":{\"Kind\":\"PrimaryMonitor\"},\"Mode\":{\"Width\":1920,\"Height\":1080,\"Frequency\":60}}";
+    var validProfile = $"{{\"Process\":\"game.exe\",\"Policy\":\"Startup\",\"Targets\":[{validPrimaryTarget}]}}";
+    var validSpecificTarget = "{\"MonitorSelector\":{\"Kind\":\"SpecificMonitor\",\"MonitorDevicePath\":\"\\\\\\\\?\\\\DISPLAY#SAM1234#ONE\",\"FriendlyNameSnapshot\":\"Samsung\"},\"Mode\":{\"Width\":1920,\"Height\":1080,\"Frequency\":60}}";
+    var invalidDocuments = new[]
+    {
+        $"{{\"Version\":3,\"Profiles\":[{validProfile}]}}",
+        "{\"Version\":2,\"Profiles\":null}",
+        "{\"Version\":2,\"Profiles\":[null]}",
+        "{\"Version\":2,\"Profiles\":[{\"Process\":null,\"Policy\":\"Startup\",\"Targets\":[]}]}",
+        "{\"Version\":2,\"Profiles\":[{\"Process\":\"game.exe\",\"Policy\":null,\"Targets\":[]}]}",
+        "{\"Version\":2,\"Profiles\":[{\"Process\":\"game.exe\",\"Policy\":\"\",\"Targets\":[]}]}",
+        "{\"Version\":2,\"Profiles\":[{\"Process\":\"game.exe\",\"Policy\":\"Forever\",\"Targets\":[]}]}",
+        "{\"Version\":2,\"Profiles\":[{\"Process\":\"game.exe\",\"Policy\":\"Startup\",\"Targets\":null}]}",
+        "{\"Version\":2,\"Profiles\":[{\"Process\":\"game.exe\",\"Policy\":\"Startup\",\"Targets\":[]}]}",
+        "{\"Version\":2,\"Profiles\":[{\"Process\":\"game.exe\",\"Policy\":\"Startup\",\"Targets\":[{\"MonitorSelector\":{\"Kind\":\"SimilarMonitor\"},\"Mode\":{\"Width\":1920,\"Height\":1080,\"Frequency\":60}}]}]}",
+        "{\"Version\":2,\"Profiles\":[{\"Process\":\"game.exe\",\"Policy\":\"Startup\",\"Targets\":[null]}]}",
+        "{\"Version\":2,\"Profiles\":[{\"Process\":\"game.exe\",\"Policy\":\"Startup\",\"Targets\":[{\"MonitorSelector\":null,\"Mode\":{\"Width\":1920,\"Height\":1080,\"Frequency\":60}}]}]}",
+        "{\"Version\":2,\"Profiles\":[{\"Process\":\"game.exe\",\"Policy\":\"Startup\",\"Targets\":[{\"MonitorSelector\":{\"Kind\":\"PrimaryMonitor\"},\"Mode\":null}]}]}",
+        "{\"Version\":2,\"Profiles\":[{\"Process\":\"game.exe\",\"Policy\":\"Startup\",\"Targets\":[{\"MonitorSelector\":{\"Kind\":\"PrimaryMonitor\"},\"Mode\":{\"Width\":0,\"Height\":1080,\"Frequency\":60}}]}]}",
+        "{\"Version\":2,\"Profiles\":[{\"Process\":\"game.exe\",\"Policy\":\"Startup\",\"Targets\":[{\"MonitorSelector\":{\"Kind\":\"SpecificMonitor\",\"MonitorDevicePath\":\"\\\\.\\\\DISPLAY1\",\"FriendlyNameSnapshot\":\"Samsung\"},\"Mode\":{\"Width\":1920,\"Height\":1080,\"Frequency\":60}}]}]}",
+        "{\"Version\":2,\"Profiles\":[{\"Process\":\"game.exe\",\"Policy\":\"Startup\",\"Targets\":[{\"MonitorSelector\":{\"Kind\":\"SpecificMonitor\",\"MonitorDevicePath\":\"\\\\\\\\?\\\\NOT_A_MONITOR\",\"FriendlyNameSnapshot\":\"Samsung\"},\"Mode\":{\"Width\":1920,\"Height\":1080,\"Frequency\":60}}]}]}",
+        $"{{\"Version\":2,\"Profiles\":[{{\"Process\":\"game.exe\",\"Policy\":\"Startup\",\"Targets\":[{validPrimaryTarget},{validPrimaryTarget}]}}]}}",
+        $"{{\"Version\":2,\"Profiles\":[{{\"Process\":\"game.exe\",\"Policy\":\"Startup\",\"Targets\":[{validSpecificTarget},{validSpecificTarget.Replace("SAM1234", "sam1234", StringComparison.Ordinal)}]}}]}}",
+        $"{{\"Version\":2,\"Profiles\":[{validProfile},{validProfile.Replace("game.exe", "GAME.EXE", StringComparison.Ordinal)}]}}"
+    };
+
+    WithTemporaryDirectory(directory =>
+    {
+        var path = Path.Combine(directory, "profiles.json");
+        File.WriteAllText(path, $"{{\"Version\":2,\"Profiles\":[{validProfile}]}}");
+        var store = new ProfileStore(path);
+        Equal(1, store.Profiles.Count);
+
+        foreach (var invalid in invalidDocuments)
+        {
+            File.WriteAllText(path, invalid);
+            True(!store.Load().Success);
+            Equal(1, store.Profiles.Count);
+            True(store.Profiles.ContainsKey("game.exe"));
+            True(!store.Save().Success);
+            Equal(invalid, File.ReadAllText(path));
+        }
+    });
+}
+
+static void InvalidInMemoryTargetsDoNotOverwrite()
+{
+    WithTemporaryDirectory(directory =>
+    {
+        var path = Path.Combine(directory, "profiles.json");
+        var store = new ProfileStore(path);
+        store.Profiles["valid.exe"] = Profile(Mode(1920, 1080, 60));
+        True(store.Save().Success);
+        var validJson = File.ReadAllText(path);
+
+        store.Profiles["invalid.exe"] = new DisplayProfile(ProfileRetentionPolicy.Startup, []);
+        True(!store.Save().Success);
+        Equal(validJson, File.ReadAllText(path));
+    });
+}
+
+static void MultiTargetWorkflowRollsBackDeeply()
+{
+    WithTemporaryDirectory(directory =>
+    {
+        var blockedDirectory = Path.Combine(directory, "blockiert");
+        File.WriteAllText(blockedDirectory, "kein Verzeichnis");
+        var store = new ProfileStore(Path.Combine(blockedDirectory, "profiles.json"));
+        var oldKey = @"C:\Games\old.exe";
+        var newKey = @"D:\Games\new.exe";
+        var original = MultiProfile();
+        var collision = new DisplayProfile(ProfileRetentionPolicy.Once,
+            [new DisplayProfileTarget(new SpecificMonitor(@"\\?\DISPLAY#DEL0001#OLD", "Anderer Monitor"), Mode(1024, 768, 60))]);
+        store.Profiles[oldKey] = original;
+        store.Profiles[newKey] = collision;
+
+        var result = ProfileEditWorkflow.Save(store, oldKey, newKey,
+            new DisplayProfile(ProfileRetentionPolicy.Once,
+                [new DisplayProfileTarget(new PrimaryMonitor(), Mode(800, 600, 60))]));
+
+        True(!result.Success);
+        Equal(original, store.Profiles[oldKey]);
+        Equal(collision, store.Profiles[newKey]);
+        True(!ReferenceEquals(original, store.Profiles[oldKey]));
+        True(!ReferenceEquals(original.Targets, store.Profiles[oldKey].Targets));
+
+        var removedReference = store.Profiles[oldKey];
+        True(!ProfileEditWorkflow.Remove(store, oldKey).Success);
+        Equal(original, store.Profiles[oldKey]);
+        True(!ReferenceEquals(removedReference, store.Profiles[oldKey]));
+    });
+}
+
+static void UnsupportedTargetsHaveNoRuntimeSideEffects()
+{
+    foreach (var unsupported in new[]
+    {
+        new DisplayProfile(ProfileRetentionPolicy.Startup,
+            [new DisplayProfileTarget(new SpecificMonitor(@"\\?\DISPLAY#SAM0E16#ONE", "Samsung C49HG9"), Mode(3840, 1080, 100))]),
+        MultiProfile()
+    })
+    {
+        var path = ProcessMatcher.CanonicalizePath(@"C:\Games\game.exe");
+        var display = new FakeDisplay { Current = Mode(1920, 1080, 60) };
+        var launcher = new FakeLauncher(new ProcessIdentity(42, DateTime.UnixEpoch, path));
+        var launchPlans = new FakeLaunchPlanResolver(LaunchPlan.Direct(path));
+        var processes = new FakeProcesses();
+        var profiles = new ConcurrentDictionary<string, DisplayProfile>(StringComparer.OrdinalIgnoreCase) { [path] = unsupported };
+        var monitor = new ProfileMonitor(profiles, display, processes, launcher: launcher, fileExists: _ => true, launchPlans: launchPlans);
+
+        var launch = monitor.LaunchProfileApplication(path, DateTime.UnixEpoch);
+        True(!launch.Success);
+        True(launch.Error?.Contains("ausschließlich genau ein Ziel", StringComparison.Ordinal) == true);
+        Equal(0, display.GetCalls);
+        Equal(0, display.SetCalls.Count);
+        Equal(0, launcher.LaunchCount);
+        Equal(0, launcher.SteamLaunchCount);
+        Equal(0, launchPlans.ResolveCount);
+        Equal(0, processes.GetCalls);
+
+        processes.Items = [new ProcessIdentity(7, DateTime.UnixEpoch, path)];
+        monitor.Poll(DateTime.UnixEpoch.AddSeconds(1));
+        monitor.Poll(DateTime.UnixEpoch.AddSeconds(2));
+        Equal(ProfileMonitorState.Error, monitor.Status.State);
+        Equal(0, display.GetCalls);
+        Equal(0, display.SetCalls.Count);
+        Equal(0, launcher.LaunchCount);
+        Equal(0, launcher.SteamLaunchCount);
+        Equal(0, launchPlans.ResolveCount);
+        Equal(2, processes.GetCalls);
+        Equal(1, monitor.DiagnosticEvents.Count(item => item.Message.Contains("Profilstart abgelehnt", StringComparison.Ordinal)));
+        Equal(0, monitor.DiagnosticEvents.Count(item => item.Message.Contains("Automatische Profilaktivierung abgelehnt", StringComparison.Ordinal)));
+    }
+}
+
+static void CurrentUiWorkflowPreservesUnsupportedTargets()
+{
+    WithTemporaryDirectory(directory =>
+    {
+        var store = new ProfileStore(Path.Combine(directory, "profiles.json"));
+        var key = @"C:\Games\game.exe";
+        var original = MultiProfile();
+        store.Profiles[key] = original;
+        True(store.Save().Success);
+
+        var result = ProfileEditWorkflow.Save(store, key, key, Mode(800, 600, 60), ProfileRetentionPolicy.Once);
+        True(!result.Success);
+        Equal(original, store.Profiles[key]);
+        Equal(2, store.Profiles[key].Targets.Count);
+
+        var reloaded = new ProfileStore(store.FilePath);
+        Equal(original, reloaded.Profiles[key]);
+        Equal("2 Monitorziele", DisplayProfilePresentation.DescribeTargets(original));
+    });
+}
+
+static void MonitorSelectorIdentityIsCaseInsensitive()
+{
+    var first = new SpecificMonitor(@"\\?\DISPLAY#SAM0E16#ABC", "Samsung C49HG9", "SAM", "0E16");
+    var sameIdentity = new SpecificMonitor(@"\\?\display#sam0e16#abc", "Umbenannter Hinweis", "XXX", "FFFF");
+    var other = new SpecificMonitor(@"\\?\DISPLAY#SAM0E16#OTHER", "Samsung C49HG9", "SAM", "0E16");
+
+    True(MonitorSelectorIdentity.Equals(first, sameIdentity));
+    True(!MonitorSelectorIdentity.Equals(first, other));
+    True(MonitorSelectorIdentity.Equals(new PrimaryMonitor(), new PrimaryMonitor()));
+    True(!MonitorSelectorIdentity.Equals(new PrimaryMonitor(), first));
+    Equal("Samsung C49HG9 → 3840x1080@100Hz", DisplayProfilePresentation.DescribeTargets(
+        new DisplayProfile(ProfileRetentionPolicy.Startup,
+            [new DisplayProfileTarget(first, Mode(3840, 1080, 100))])));
+}
+
+static DisplayProfile MultiProfile() => new(ProfileRetentionPolicy.Continuous,
+[
+    new DisplayProfileTarget(new SpecificMonitor(@"\\?\DISPLAY#SAM0E16#ONE", "Samsung C49HG9", "SAM", "0E16"), Mode(3840, 1080, 100)),
+    new DisplayProfileTarget(new SpecificMonitor(@"\\?\DISPLAY#SAM71AB#TWO", "Odyssey Neo G9", "SAM", "71AB"), Mode(5120, 1440, 120))
+]);
+
 static void OncePolicyDoesNotReapply()
 {
     var fixture = new MonitorFixture(ProfileRetentionPolicy.Once);
@@ -1069,7 +1342,8 @@ static void ProfileRemovalRollsBackOnSaveFailure()
 
         True(!result.Success);
         Equal(1, store.Profiles.Count);
-        True(ReferenceEquals(profile, store.Profiles[key]));
+        Equal(profile, store.Profiles[key]);
+        True(!ReferenceEquals(profile, store.Profiles[key]));
     });
 }
 
@@ -1211,10 +1485,15 @@ sealed class SteamLaunchFixture
 sealed class FakeDisplay : IDisplayService
 {
     public DisplayMode? Current { get; set; }
+    public int GetCalls { get; private set; }
     public Queue<OperationResult> Results { get; } = new();
     public List<DisplayMode> SetCalls { get; } = new();
     public Action<DisplayMode>? OnSet { get; set; }
-    public DisplayMode? GetCurrentDisplayMode() => Current;
+    public DisplayMode? GetCurrentDisplayMode()
+    {
+        GetCalls++;
+        return Current;
+    }
     public OperationResult SetDisplayMode(DisplayMode mode)
     {
         SetCalls.Add(mode);
@@ -1252,9 +1531,18 @@ sealed class FakeLauncher(ProcessIdentity identity) : IApplicationLauncher
     }
 }
 
-sealed class FakeLaunchPlanResolver(LaunchPlan plan) : ILaunchPlanResolver
+sealed class FakeLaunchPlanResolver : ILaunchPlanResolver
 {
-    public LaunchPlan Resolve(string executablePath) => plan;
+    private readonly LaunchPlan _plan;
+    public int ResolveCount { get; private set; }
+
+    public FakeLaunchPlanResolver(LaunchPlan plan) => _plan = plan;
+
+    public LaunchPlan Resolve(string executablePath)
+    {
+        ResolveCount++;
+        return _plan;
+    }
 }
 
 sealed class FakeLaunchedApplication(ProcessIdentity identity) : ILaunchedApplication
@@ -1267,7 +1555,12 @@ sealed class FakeLaunchedApplication(ProcessIdentity identity) : ILaunchedApplic
 sealed class FakeProcesses : IProcessProvider
 {
     public IReadOnlyList<ProcessIdentity> Items { get; set; } = Array.Empty<ProcessIdentity>();
-    public IReadOnlyList<ProcessIdentity> GetCurrentSessionProcesses() => Items;
+    public int GetCalls { get; private set; }
+    public IReadOnlyList<ProcessIdentity> GetCurrentSessionProcesses()
+    {
+        GetCalls++;
+        return Items;
+    }
 }
 
 sealed class FakeAutostartRegistry : IAutostartRegistry

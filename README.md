@@ -90,14 +90,25 @@ neben der EXE wird beim ersten Start in diesen Speicherort übernommen und dabei
 nicht gelöscht. Beschädigte oder ungültige Profildaten werden nicht
 überschrieben; die Datei kann nach Sicherung korrigiert oder entfernt werden.
 Profile aus früheren Versionen ohne Richtlinienfeld werden beim Laden als
-**Während Startphase stabilisieren** behandelt und beim nächsten Speichern in
-das neue, lesbare Format übernommen. Unbekannte Richtlinienwerte gelten als
+**Während Startphase stabilisieren** behandelt und beim Laden transaktional in
+das neue, versionierte V2-Format übernommen. Dabei wird der bisherige Zielmodus
+verlustfrei einem expliziten Ziel **Primärmonitor** zugeordnet. V2 kann bereits
+stabile Monitor-Gerätepfade, Anzeigenamen als Hinweis sowie mehrere Monitorziele
+verlustfrei speichern. Anzeigename und optionale EDID-Werte werden dabei nie als
+automatischer Ersatz für die Geräteidentität verwendet. Unbekannte Versionen,
+Monitorarten oder Richtlinien sowie ungültige und doppelte Ziele gelten als
 ungültige Profildaten und blockieren ein Überschreiben ebenso wie andere
 Dateifehler.
 
 ## Grenzen und Sicherheitsverhalten
 
-- Es wird ausschließlich der Primärmonitor berücksichtigt.
+- Die Laufzeit und die aktuelle Profiloberfläche berücksichtigen in diesem
+  Zwischenstand weiterhin ausschließlich genau ein Ziel für den Primärmonitor.
+  Bereits gespeicherte spezifische oder mehrere Monitorziele werden angezeigt
+  und bewahrt, aber weder ausgeführt noch in der Oberfläche bearbeitet. Ein
+  kontrollierter oder automatischer Start wird für solche Profile ohne
+  Display- oder Startaktion abgelehnt. Monitorerkennung, Neuverknüpfung und
+  gezielte Schreibaufrufe folgen in späteren Checkpoints.
 - Geschützte oder bereits beendete Prozesse können nicht als Profil verwendet
   werden.
 - Epic, GOG und sonstige Launcher werden derzeit nicht eigens erkannt. Sie

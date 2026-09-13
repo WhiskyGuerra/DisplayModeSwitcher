@@ -27,6 +27,7 @@ namespace DisplayModeSwitcher
         private int _launchTypeLoadVersion;
         private bool _isClosing;
         private bool _launchInProgress;
+        private bool _editingUnsupportedProfile;
         private string? _editingProcessKey;
         private string? _preferredProcessPath;
 
@@ -34,10 +35,9 @@ namespace DisplayModeSwitcher
         {
             public string ProcessKey { get; set; } = string.Empty;
             public ProcessPresentationItem Presentation { get; set; } = new(string.Empty, string.Empty, string.Empty);
-            public DisplayMode Mode { get; set; } = new DisplayMode();
-            public ProfileRetentionPolicy Policy { get; set; } = ProfileRetentionPolicy.Startup;
+            public DisplayProfile Profile { get; set; } = new(new DisplayMode());
             public bool IsMissingExecutable { get; set; }
-            public override string ToString() => $"{Presentation} → {Mode.Width}x{Mode.Height}@{Mode.Frequency}Hz · {ProfileRetentionPolicyText.ToShortDisplayName(Policy)}" + (IsMissingExecutable ? " — Datei fehlt" : string.Empty);
+            public override string ToString() => $"{Presentation} · {DisplayProfilePresentation.DescribeTargets(Profile)} · {ProfileRetentionPolicyText.ToShortDisplayName(Profile.Policy)}" + (IsMissingExecutable ? " — Datei fehlt" : string.Empty);
         }
 
         private sealed record PolicyListItem(ProfileRetentionPolicy Policy)
@@ -159,13 +159,18 @@ namespace DisplayModeSwitcher
             _profileList.Items.Clear();
             foreach (var kvp in _store.Profiles)
             {
-                _profileList.Items.Add(new ProfileListItem { ProcessKey = kvp.Key, Presentation = ProcessPresentation.CreateProfileItem(kvp.Key), Mode = kvp.Value.Mode, Policy = kvp.Value.Policy, IsMissingExecutable = ProcessPresentation.IsMissingProfileExecutable(kvp.Key) });
+                _profileList.Items.Add(new ProfileListItem { ProcessKey = kvp.Key, Presentation = ProcessPresentation.CreateProfileItem(kvp.Key), Profile = kvp.Value, IsMissingExecutable = ProcessPresentation.IsMissingProfileExecutable(kvp.Key) });
             }
             UpdateLaunchButton();
         }
 
         private void OnAdd(object? sender, EventArgs e)
         {
+            if (_editingUnsupportedProfile)
+            {
+                MessageBox.Show(DisplayProfileCompatibility.UnsupportedTargetsMessage, "Profile", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
             if (_processBox.SelectedItem is not ProcessPresentationItem processItem ||
                 _modeBox.SelectedItem is not DisplayMode mode ||
                 _policyBox.SelectedItem is not PolicyListItem policyItem)
@@ -214,11 +219,17 @@ namespace DisplayModeSwitcher
                 return;
             }
             _editingProcessKey = item.ProcessKey;
-            _editStateLabel.Text = "Profil bearbeiten";
+            var supported = DisplayProfileCompatibility.TryGetCurrentPrimaryTarget(item.Profile, out _);
+            _editingUnsupportedProfile = !supported;
+            _editStateLabel.Text = supported ? "Profil bearbeiten" : "Monitorziele in diesem Zwischenstand nur lesbar";
             _addButton.Text = "Profil aktualisieren";
+            _addButton.Enabled = supported;
+            _modeBox.Enabled = supported;
+            _policyBox.Enabled = supported;
             SelectProcessPath(item.ProcessKey);
-            SelectMode(item.Mode);
-            SelectPolicy(item.Policy);
+            if (item.Profile.Targets.Count > 0)
+                SelectMode(item.Profile.Targets[0].Mode);
+            SelectPolicy(item.Profile.Policy);
             UpdateLaunchButton();
             RefreshLaunchType(item);
         }
@@ -226,8 +237,12 @@ namespace DisplayModeSwitcher
         private void StartNewProfile()
         {
             _editingProcessKey = null;
+            _editingUnsupportedProfile = false;
             _editStateLabel.Text = "Neues Profil";
             _addButton.Text = "Profil speichern";
+            _addButton.Enabled = true;
+            _modeBox.Enabled = true;
+            _policyBox.Enabled = true;
             _profileList.ClearSelected();
             _launchTypeLoadVersion++;
             _launchTypeLabel.Text = "Startart nur beim Klick: –";
@@ -265,12 +280,18 @@ namespace DisplayModeSwitcher
         {
             var item = _profileList.SelectedItem as ProfileListItem;
             _launchButton.Enabled = !_launchInProgress && item is not null &&
+                DisplayProfileCompatibility.TryGetCurrentPrimaryTarget(item.Profile, out _) &&
                 Path.IsPathFullyQualified(item.ProcessKey) && !item.IsMissingExecutable;
         }
 
         private async void RefreshLaunchType(ProfileListItem item)
         {
             var loadVersion = ++_launchTypeLoadVersion;
+            if (!DisplayProfileCompatibility.TryGetCurrentPrimaryTarget(item.Profile, out _))
+            {
+                _launchTypeLabel.Text = "Startart nur beim Klick: nicht unterstützt";
+                return;
+            }
             if (!Path.IsPathFullyQualified(item.ProcessKey) || item.IsMissingExecutable)
             {
                 _launchTypeLabel.Text = "Startart nur beim Klick: –";
@@ -336,6 +357,8 @@ namespace DisplayModeSwitcher
             {
                 MessageBox.Show(result.Error ?? "Das Profil konnte nicht entfernt werden.", "Profile", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
+            else
+                StartNewProfile();
             RefreshProfileList();
         }
     }

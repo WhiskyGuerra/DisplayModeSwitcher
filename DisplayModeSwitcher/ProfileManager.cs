@@ -259,7 +259,14 @@ public sealed class ProfileMonitor
                 return ProfileLaunchResult.Failed("Die Profilüberwachung wurde bereits beendet.");
             if (!_profiles.TryGetValue(canonicalPath, out var profile))
                 return ProfileLaunchResult.Failed("Das ausgewählte Profil ist nicht mehr vorhanden.");
-            var target = profile.Mode;
+            if (!DisplayProfileCompatibility.TryGetCurrentPrimaryTarget(profile, out var primaryTarget))
+            {
+                SetStatus(ProfileMonitorState.Error, DisplayProfileCompatibility.UnsupportedTargetsMessage,
+                    canonicalPath, null, DisplayProfileCompatibility.UnsupportedTargetsMessage, utcNow, policy: profile.Policy);
+                AddEvent(utcNow, $"Profilstart abgelehnt: {DisplayProfileCompatibility.UnsupportedTargetsMessage}");
+                return ProfileLaunchResult.Failed(DisplayProfileCompatibility.UnsupportedTargetsMessage);
+            }
+            var target = primaryTarget!.Mode;
             if (!_fileExists(canonicalPath))
                 return ProfileLaunchResult.Failed("Die EXE-Datei des ausgewählten Profils wurde nicht gefunden.");
             if (_active is not null)
@@ -684,22 +691,34 @@ public sealed class ProfileMonitor
 
     private void TryActivate(IReadOnlyList<ProcessIdentity> running, DateTime utcNow)
     {
-        var candidates = new List<(string Profile, DisplayProfile Definition, ProcessIdentity Process)>();
+        var candidates = new List<(string Profile, DisplayProfile Definition, DisplayProfileTarget Target, ProcessIdentity Process)>();
         foreach (var profile in _profiles.OrderBy(item => item.Key, StringComparer.OrdinalIgnoreCase))
         {
             var matches = ProcessMatcher.FindMatches(profile.Key, running);
+            DisplayProfileTarget? supportedTarget = null;
+            if (matches.Count > 0 && !DisplayProfileCompatibility.TryGetCurrentPrimaryTarget(profile.Value, out supportedTarget))
+            {
+                var alreadyUnsupported = _status.State == ProfileMonitorState.Error &&
+                    string.Equals(_status.ProfileProcess, profile.Key, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(_status.LastResult, DisplayProfileCompatibility.UnsupportedTargetsMessage, StringComparison.Ordinal);
+                SetStatus(ProfileMonitorState.Error, DisplayProfileCompatibility.UnsupportedTargetsMessage,
+                    profile.Key, null, DisplayProfileCompatibility.UnsupportedTargetsMessage, utcNow, policy: profile.Value.Policy);
+                if (!alreadyUnsupported)
+                    AddEvent(utcNow, $"Automatische Profilaktivierung abgelehnt: {DisplayProfileCompatibility.UnsupportedTargetsMessage}");
+                return;
+            }
             if (matches.Count > 1)
             {
                 var alreadyAmbiguous = _status.State == ProfileMonitorState.Ambiguous &&
                     string.Equals(_status.ProfileProcess, profile.Key, StringComparison.OrdinalIgnoreCase);
                 SetStatus(ProfileMonitorState.Ambiguous,
-                    $"Profil '{profile.Key}' passt zu mehreren laufenden Prozessen; es wird nicht automatisch geschaltet.", profile.Key, profile.Value.Mode, null, utcNow, policy: profile.Value.Policy);
+                    $"Profil '{profile.Key}' passt zu mehreren laufenden Prozessen; es wird nicht automatisch geschaltet.", profile.Key, supportedTarget!.Mode, null, utcNow, policy: profile.Value.Policy);
                 if (!alreadyAmbiguous)
                     AddEvent(utcNow, $"Mehrdeutiges Legacy-Profil erkannt: {profile.Key}.");
                 return;
             }
             if (matches.Count == 1)
-                candidates.Add((profile.Key, profile.Value, matches[0]));
+                candidates.Add((profile.Key, profile.Value, supportedTarget!, matches[0]));
         }
 
         if (candidates.Count == 0)
@@ -722,14 +741,14 @@ public sealed class ProfileMonitor
             _nextActionUtc = utcNow + _retryInterval;
             _retryCount++;
             SetStatus(ProfileMonitorState.Error, $"Der aktuelle Anzeigemodus konnte nicht gelesen werden: {ex.Message}",
-                candidate.Profile, candidate.Definition.Mode, ex.Message, utcNow, policy: candidate.Definition.Policy);
+                candidate.Profile, candidate.Target.Mode, ex.Message, utcNow, policy: candidate.Definition.Policy);
             AddEvent(utcNow, $"Aktueller Anzeigemodus für Profil '{candidate.Profile}' konnte nicht gelesen werden: {ex.Message}");
             return;
         }
         if (original is null)
         {
             _nextActionUtc = utcNow + _retryInterval;
-            SetStatus(ProfileMonitorState.Error, "Der aktuelle Anzeigemodus konnte nicht gelesen werden.", candidate.Profile, candidate.Definition.Mode, "Aktueller Anzeigemodus nicht lesbar", utcNow, policy: candidate.Definition.Policy);
+            SetStatus(ProfileMonitorState.Error, "Der aktuelle Anzeigemodus konnte nicht gelesen werden.", candidate.Profile, candidate.Target.Mode, "Aktueller Anzeigemodus nicht lesbar", utcNow, policy: candidate.Definition.Policy);
             return;
         }
 
@@ -738,7 +757,7 @@ public sealed class ProfileMonitor
             ProfileProcess = candidate.Profile,
             Process = candidate.Process,
             LaunchPlan = LaunchPlan.Direct(candidate.Profile),
-            Target = candidate.Definition.Mode,
+            Target = candidate.Target.Mode,
             Original = original,
             Policy = candidate.Definition.Policy
         };

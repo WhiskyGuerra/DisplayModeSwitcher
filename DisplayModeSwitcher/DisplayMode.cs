@@ -2,10 +2,10 @@ namespace DisplayModeSwitcher
 {
     public class DisplayMode
     {
-        public string Label { get; set; } = string.Empty;
-        public uint Width { get; set; }
-        public uint Height { get; set; }
-        public uint Frequency { get; set; }
+        public string Label { get; init; } = string.Empty;
+        public uint Width { get; init; }
+        public uint Height { get; init; }
+        public uint Frequency { get; init; }
     
         public override string ToString()
         {
