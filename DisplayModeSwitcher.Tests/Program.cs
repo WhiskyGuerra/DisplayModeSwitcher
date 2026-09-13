@@ -23,7 +23,9 @@ var tests = new (string Name, Action Run)[]
     ("Windows-Hosts und eigene Instanzen werden gefiltert", WindowsHostsAndToolAreFiltered),
     ("Profilbearbeitung aktualisiert und verschiebt Profile", ProfileEditingUpdatesAndMovesProfile),
     ("Profilbearbeitung wechselt Schlüssel mit Rückrollschutz", ProfileEditingRollsBackOnSaveFailure),
-    ("Fehlende EXE und Legacy-Profile werden korrekt unterschieden", MissingExecutableDoesNotFlagLegacyProfile)
+    ("Fehlende EXE und Legacy-Profile werden korrekt unterschieden", MissingExecutableDoesNotFlagLegacyProfile),
+    ("Diagnosepuffer ist begrenzt und chronologisch", DiagnosticBufferIsBounded),
+    ("Diagnosebericht formatiert Snapshot und Ereignisse", DiagnosticReportFormatsSnapshot)
 };
 
 var failures = new List<string>();
@@ -159,6 +161,30 @@ static void ManagerLifecycleIsCancellable()
     manager.Start();
     manager.Dispose();
     manager.Dispose();
+}
+
+static void DiagnosticBufferIsBounded()
+{
+    var buffer = new DiagnosticEventBuffer(2);
+    var now = DateTime.UnixEpoch;
+    buffer.Add(now, "erstes");
+    buffer.Add(now.AddSeconds(1), "zweites");
+    buffer.Add(now.AddSeconds(2), "drittes");
+    var snapshot = buffer.Snapshot();
+    Equal(2, snapshot.Count);
+    Equal("zweites", snapshot[0].Message);
+    Equal("drittes", snapshot[1].Message);
+}
+
+static void DiagnosticReportFormatsSnapshot()
+{
+    var status = new ProfileMonitorStatus(ProfileMonitorState.RetryPending, "Erneuter Versuch folgt.", @"C:\Games\game.exe", Mode(1280, 720, 60), DateTime.UnixEpoch, "Testfehler", 2);
+    var report = DiagnosticReportFormatter.Format(new DiagnosticReportData(DateTime.UnixEpoch, "1.2.3", "Windows Test", "8.0", "X64", "1920x1080 @ 60Hz", status,
+        [new ProfileMonitorDiagnosticEvent(DateTime.UnixEpoch, "Profilmodus konnte nicht angewendet werden.")]));
+    True(report.Contains("App-Version: 1.2.3"));
+    True(report.Contains("Zustand: Wiederholung ausstehend"));
+    True(report.Contains("Wiederholungen: 2"));
+    True(report.Contains("Profilmodus konnte nicht angewendet werden."));
 }
 
 static void AutostartUsesVerifiedQuotedCommand()

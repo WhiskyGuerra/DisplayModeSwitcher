@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Drawing;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
 namespace DisplayModeSwitcher
@@ -11,6 +12,9 @@ namespace DisplayModeSwitcher
         private readonly ProfileManager _profileManager;
         private readonly NotifyIcon trayIcon;
         private readonly ContextMenuStrip contextMenu;
+        private readonly ToolStripMenuItem _statusItem;
+        private readonly System.Windows.Forms.Timer _statusTimer;
+        private bool _clipboardErrorShown;
         public TrayForm(ProfileStore store, AutostartService autostart, ProfileManager profileManager)
         {
             _store = store;
@@ -32,13 +36,17 @@ namespace DisplayModeSwitcher
             };
             contextMenu.Items.Add(autostartItem);
 
-            var statusItem = new ToolStripMenuItem { Enabled = false };
-            contextMenu.Items.Add(statusItem);
+            _statusItem = new ToolStripMenuItem { Enabled = false };
+            contextMenu.Items.Add(_statusItem);
             contextMenu.Opening += (s, e) =>
             {
                 RefreshAutostartItem(autostartItem);
-                statusItem.Text = $"Profilstatus: {_profileManager.Status.Message}";
+                RefreshStatus();
             };
+
+            var diagnosticsItem = new ToolStripMenuItem("Diagnose kopieren");
+            diagnosticsItem.Click += (s, e) => CopyDiagnostics();
+            contextMenu.Items.Add(diagnosticsItem);
 
             var manageItem = new ToolStripMenuItem("Profile verwalten...");
             manageItem.Click += (s, e) =>
@@ -62,6 +70,11 @@ namespace DisplayModeSwitcher
                 Visible = true
             };
 
+            _statusTimer = new System.Windows.Forms.Timer { Interval = 1000 };
+            _statusTimer.Tick += (s, e) => RefreshStatus();
+            _statusTimer.Start();
+            RefreshStatus();
+
             WindowState = FormWindowState.Minimized;
             ShowInTaskbar = false;
             FormBorderStyle = FormBorderStyle.FixedToolWindow;
@@ -75,6 +88,36 @@ namespace DisplayModeSwitcher
             };
         }
 
+        private void RefreshStatus()
+        {
+            var status = _profileManager.Status;
+            var state = DiagnosticReportFormatter.DisplayState(status.State);
+            _statusItem.Text = $"Status: {state}";
+            _statusItem.ToolTipText = status.Message;
+            var tooltip = $"Display Mode Switcher – {state}";
+            trayIcon.Text = tooltip.Length <= 63 ? tooltip : "Display Mode Switcher";
+        }
+
+        private void CopyDiagnostics()
+        {
+            DisplayMode? currentMode;
+            try { currentMode = DisplayManager.GetCurrentDisplayMode(); }
+            catch { currentMode = null; }
+
+            var report = DiagnosticReportFormatter.Format(DiagnosticReportFormatter.Create(
+                _profileManager.Status, _profileManager.DiagnosticEvents, currentMode));
+            try
+            {
+                Clipboard.SetText(report);
+            }
+            catch (Exception ex) when (ex is ExternalException or ThreadStateException)
+            {
+                if (_clipboardErrorShown) return;
+                _clipboardErrorShown = true;
+                MessageBox.Show("Die Diagnose konnte nicht in die Zwischenablage kopiert werden. Bitte erneut versuchen.", "Diagnose", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
+
         private void RefreshAutostartItem(ToolStripMenuItem item)
         {
             var status = _autostart.GetStatus();
@@ -86,12 +129,14 @@ namespace DisplayModeSwitcher
 
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
+            _statusTimer.Stop();
             trayIcon.Visible = false;
             base.OnFormClosing(e);
         }
 
         protected override void OnFormClosed(FormClosedEventArgs e)
         {
+            _statusTimer.Dispose();
             trayIcon.Dispose();
             contextMenu.Dispose();
             base.OnFormClosed(e);

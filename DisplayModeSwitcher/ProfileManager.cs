@@ -70,11 +70,18 @@ public static class ProcessMatcher
     }
 }
 
-public enum ProfileMonitorState { Idle, Active, RetryPending, Restoring, Ambiguous, Error }
+public enum ProfileMonitorState { Idle, Active, RetryPending, Restoring, Ambiguous, Error, Stopped }
 
-public sealed record ProfileMonitorStatus(ProfileMonitorState State, string Message, string? ProfileProcess = null)
+public sealed record ProfileMonitorStatus(
+    ProfileMonitorState State,
+    string Message,
+    string? ProfileProcess = null,
+    DisplayMode? TargetMode = null,
+    DateTime? LastChangedUtc = null,
+    string? LastResult = null,
+    int RetryCount = 0)
 {
-    public static ProfileMonitorStatus Idle { get; } = new(ProfileMonitorState.Idle, "Kein Profilprozess aktiv.");
+    public static ProfileMonitorStatus Idle { get; } = new(ProfileMonitorState.Idle, "Wartet auf einen Profilprozess.");
 }
 
 public sealed class ProfileMonitor
@@ -88,6 +95,8 @@ public sealed class ProfileMonitor
     private ActiveProfile? _active;
     private DateTime _nextActionUtc;
     private ProfileMonitorStatus _status = ProfileMonitorStatus.Idle;
+    private readonly DiagnosticEventBuffer _events = new();
+    private int _retryCount;
 
     private sealed class ActiveProfile
     {
@@ -118,6 +127,17 @@ public sealed class ProfileMonitor
         get { return Volatile.Read(ref _status); }
     }
 
+    public IReadOnlyList<ProfileMonitorDiagnosticEvent> DiagnosticEvents => _events.Snapshot();
+
+    public void Start(DateTime utcNow)
+    {
+        lock (_sync)
+        {
+            SetStatus(ProfileMonitorState.Idle, "Wartet auf einen Profilprozess.", null, null, null, utcNow);
+            AddEvent(utcNow, "Profilüberwachung gestartet.");
+        }
+    }
+
     public void Poll(DateTime utcNow)
     {
         lock (_sync)
@@ -138,6 +158,8 @@ public sealed class ProfileMonitor
                         process.StartTimeUtc == _active.Process.StartTimeUtc &&
                         string.Equals(process.ExecutablePath, _active.Process.ExecutablePath, StringComparison.OrdinalIgnoreCase)))
                 {
+                    if (!_active.ProcessExited)
+                        AddEvent(utcNow, $"Profilprozess beendet: {_active.ProfileProcess}.");
                     _active.ProcessExited = true;
                     TryRestore(utcNow);
                     return;
@@ -148,7 +170,7 @@ public sealed class ProfileMonitor
             catch (Exception ex)
             {
                 _nextActionUtc = utcNow + _retryInterval;
-                _status = new(ProfileMonitorState.Error, $"Profilüberwachung fehlgeschlagen: {ex.Message}", _active?.ProfileProcess);
+                SetStatus(ProfileMonitorState.Error, $"Profilüberwachung fehlgeschlagen: {ex.Message}", _active?.ProfileProcess, _active?.Target, ex.Message, utcNow);
             }
         }
     }
@@ -160,7 +182,7 @@ public sealed class ProfileMonitor
             if (_active is null || !_active.ToolChangedMode)
             {
                 _active = null;
-                _status = ProfileMonitorStatus.Idle;
+                SetStopped(DateTime.UtcNow);
                 return OperationResult.Ok();
             }
 
@@ -176,11 +198,12 @@ public sealed class ProfileMonitor
             if (result.Success)
             {
                 _active = null;
-                _status = ProfileMonitorStatus.Idle;
+                SetStopped(DateTime.UtcNow);
             }
             else
             {
-                _status = new(ProfileMonitorState.Error, $"Originalmodus konnte beim Beenden nicht wiederhergestellt werden: {result.Error}", _active.ProfileProcess);
+                SetStatus(ProfileMonitorState.Error, $"Originalmodus konnte beim Beenden nicht wiederhergestellt werden: {result.Error}", _active.ProfileProcess, _active.Target, result.Error, DateTime.UtcNow);
+                AddEvent(DateTime.UtcNow, $"Wiederherstellung beim Beenden fehlgeschlagen: {result.Error}");
             }
 
             return result;
@@ -195,8 +218,12 @@ public sealed class ProfileMonitor
             var matches = ProcessMatcher.FindMatches(profile.Key, running);
             if (matches.Count > 1)
             {
-                _status = new(ProfileMonitorState.Ambiguous,
-                    $"Profil '{profile.Key}' passt zu mehreren laufenden Prozessen; es wird nicht automatisch geschaltet.", profile.Key);
+                var alreadyAmbiguous = _status.State == ProfileMonitorState.Ambiguous &&
+                    string.Equals(_status.ProfileProcess, profile.Key, StringComparison.OrdinalIgnoreCase);
+                SetStatus(ProfileMonitorState.Ambiguous,
+                    $"Profil '{profile.Key}' passt zu mehreren laufenden Prozessen; es wird nicht automatisch geschaltet.", profile.Key, profile.Value, null, utcNow);
+                if (!alreadyAmbiguous)
+                    AddEvent(utcNow, $"Mehrdeutiges Legacy-Profil erkannt: {profile.Key}.");
                 return;
             }
             if (matches.Count == 1)
@@ -205,13 +232,13 @@ public sealed class ProfileMonitor
 
         if (candidates.Count == 0)
         {
-            _status = ProfileMonitorStatus.Idle;
+            SetStatus(ProfileMonitorState.Idle, "Wartet auf einen Profilprozess.", null, null, null, utcNow);
             return;
         }
 
         if (candidates.Count > 1)
         {
-            _status = new(ProfileMonitorState.Ambiguous, "Mehrere Profile sind gleichzeitig aktiv; es wird nicht automatisch geschaltet.");
+            SetStatus(ProfileMonitorState.Ambiguous, "Mehrere Profile sind gleichzeitig aktiv; es wird nicht automatisch geschaltet.", null, null, null, utcNow);
             return;
         }
 
@@ -220,7 +247,7 @@ public sealed class ProfileMonitor
         if (original is null)
         {
             _nextActionUtc = utcNow + _retryInterval;
-            _status = new(ProfileMonitorState.Error, "Der aktuelle Anzeigemodus konnte nicht gelesen werden.", candidate.Profile);
+            SetStatus(ProfileMonitorState.Error, "Der aktuelle Anzeigemodus konnte nicht gelesen werden.", candidate.Profile, candidate.Mode, "Aktueller Anzeigemodus nicht lesbar", utcNow);
             return;
         }
 
@@ -231,6 +258,7 @@ public sealed class ProfileMonitor
             Target = candidate.Mode,
             Original = original
         };
+        AddEvent(utcNow, $"Profilprozess erkannt: {candidate.Profile}.");
         EnsureTargetMode(utcNow);
     }
 
@@ -241,22 +269,27 @@ public sealed class ProfileMonitor
         if (current is not null && current.Equals(active.Target))
         {
             _nextActionUtc = utcNow + _verificationInterval;
-            _status = new(ProfileMonitorState.Active, $"Profilmodus für '{active.ProfileProcess}' ist aktiv.", active.ProfileProcess);
+            SetStatus(ProfileMonitorState.Active, $"Profilmodus für '{active.ProfileProcess}' ist aktiv.", active.ProfileProcess, active.Target, "Zielmodus aktiv", utcNow);
             return;
         }
 
         var result = _display.SetDisplayMode(active.Target);
         if (result.Success)
         {
+            var reapply = active.ToolChangedMode;
             active.ToolChangedMode = true;
             _nextActionUtc = utcNow + _verificationInterval;
-            _status = new(ProfileMonitorState.Active, $"Profilmodus für '{active.ProfileProcess}' wurde angewendet.", active.ProfileProcess);
+            _retryCount = 0;
+            SetStatus(ProfileMonitorState.Active, $"Profilmodus für '{active.ProfileProcess}' wurde angewendet.", active.ProfileProcess, active.Target, "Anwenden erfolgreich", utcNow);
+            AddEvent(utcNow, reapply ? $"Profilmodus erneut angewendet: {active.ProfileProcess}." : $"Profilmodus angewendet: {active.ProfileProcess}.");
         }
         else
         {
             _nextActionUtc = utcNow + _retryInterval;
-            _status = new(ProfileMonitorState.RetryPending,
-                $"Profilmodus für '{active.ProfileProcess}' konnte nicht angewendet werden: {result.Error} Neuer Versuch folgt.", active.ProfileProcess);
+            _retryCount++;
+            SetStatus(ProfileMonitorState.RetryPending,
+                $"Profilmodus für '{active.ProfileProcess}' konnte nicht angewendet werden: {result.Error} Neuer Versuch folgt.", active.ProfileProcess, active.Target, result.Error, utcNow);
+            AddEvent(utcNow, $"Profilmodus konnte nicht angewendet werden: {result.Error}");
         }
     }
 
@@ -266,7 +299,7 @@ public sealed class ProfileMonitor
         if (!active.ToolChangedMode)
         {
             _active = null;
-            _status = ProfileMonitorStatus.Idle;
+            SetStatus(ProfileMonitorState.Idle, "Wartet auf einen Profilprozess.", null, null, "Keine Wiederherstellung erforderlich", utcNow);
             return;
         }
 
@@ -274,12 +307,15 @@ public sealed class ProfileMonitor
         if (result.Success)
         {
             _active = null;
-            _status = ProfileMonitorStatus.Idle;
+            AddEvent(utcNow, $"Originalmodus wiederhergestellt: {active.ProfileProcess}.");
+            SetStatus(ProfileMonitorState.Idle, "Wartet auf einen Profilprozess.", null, null, "Wiederherstellung erfolgreich", utcNow);
         }
         else
         {
             _nextActionUtc = utcNow + _retryInterval;
-            _status = new(ProfileMonitorState.Restoring, $"Originalmodus konnte nicht wiederhergestellt werden: {result.Error} Neuer Versuch folgt.", active.ProfileProcess);
+            _retryCount++;
+            SetStatus(ProfileMonitorState.Restoring, $"Originalmodus konnte nicht wiederhergestellt werden: {result.Error} Neuer Versuch folgt.", active.ProfileProcess, active.Target, result.Error, utcNow);
+            AddEvent(utcNow, $"Wiederherstellung fehlgeschlagen: {result.Error}");
         }
     }
 
@@ -291,6 +327,25 @@ public sealed class ProfileMonitor
             ? OperationResult.Ok()
             : _display.SetDisplayMode(active.Original);
     }
+
+    private void SetStopped(DateTime utcNow)
+    {
+        _active = null;
+        SetStatus(ProfileMonitorState.Stopped, "Profilüberwachung wurde gestoppt.", null, null, null, utcNow);
+        AddEvent(utcNow, "Profilüberwachung gestoppt.");
+    }
+
+    private void SetStatus(ProfileMonitorState state, string message, string? profileProcess, DisplayMode? targetMode, string? result, DateTime utcNow)
+    {
+        var next = new ProfileMonitorStatus(state, message, profileProcess, targetMode, utcNow, result, _retryCount);
+        var current = Volatile.Read(ref _status);
+        if (current.State == next.State && current.Message == next.Message && current.ProfileProcess == next.ProfileProcess &&
+            Equals(current.TargetMode, next.TargetMode) && current.LastResult == next.LastResult && current.RetryCount == next.RetryCount)
+            return;
+        Volatile.Write(ref _status, next);
+    }
+
+    private void AddEvent(DateTime utcNow, string message) => _events.Add(utcNow, message);
 }
 
 public sealed class ProfileManager : IDisposable
@@ -312,6 +367,7 @@ public sealed class ProfileManager : IDisposable
     }
 
     public ProfileMonitorStatus Status => _monitor.Status;
+    public IReadOnlyList<ProfileMonitorDiagnosticEvent> DiagnosticEvents => _monitor.DiagnosticEvents;
 
     public void Start()
     {
@@ -320,6 +376,7 @@ public sealed class ProfileManager : IDisposable
             ObjectDisposedException.ThrowIf(_disposed, this);
             if (_started) return;
             _started = true;
+            _monitor.Start(DateTime.UtcNow);
             _thread.Start();
         }
     }
