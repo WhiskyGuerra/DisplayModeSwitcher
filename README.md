@@ -14,7 +14,17 @@ Beim Beenden des Prozesses wird der zuvor aktive Modus wiederhergestellt.
 Nach dem Start läuft das Tool ohne Hauptfenster im Infobereich. Über das
 Tray-Menü können Auflösung und Bildwiederholrate manuell gewählt werden.
 
-Unter **Profile verwalten...** wird pro Programm ein Zielmodus gespeichert.
+Unter **Profile verwalten...** werden pro Programm ein oder mehrere explizite
+Monitorziele mit jeweils eigenem Zielmodus gespeichert. Neue Profile beginnen
+bewusst ohne Monitorvorauswahl und können erst nach dem Hinzufügen mindestens
+eines gültigen Ziels gespeichert werden. **Primärmonitor (dynamisch)** folgt bei
+jeder Aktivierung dem dann aktuellen Windows-Primärmonitor. Ein spezifischer
+Monitor wird dagegen ausschließlich über seinen stabilen Windows-Gerätepfad
+gebunden; Anzeigename und EDID-Daten bleiben nur Hinweise. Ein fehlendes Ziel
+wird niemals automatisch anhand dieser Hinweise ersetzt. **Ziel neu zuordnen**
+zeigt stattdessen den alten und neuen Monitor und verlangt eine ausdrückliche
+Bestätigung sowie gegebenenfalls eine neue Moduswahl.
+
 Mit **Modus beibehalten** wird außerdem festgelegt, wie das Tool auf spätere
 Abweichungen reagiert:
 
@@ -111,10 +121,12 @@ Dateifehler.
 - Die Topologieschicht trennt physische Monitor-Gerätepfade und Friendly Names
   von der aktuellen `DISPLAYx`-Zuordnung. Sie blockiert unklare Pfade,
   Klon-Gruppen, doppelte Quellen und mehrdeutige Modi vor dem ersten Apply.
-- Monitorwahl, Profil-Editor für mehrere Ziele und ein target-aware Tray-Menü
-  sind weiterhin ausstehend. Das manuelle Tray-Schalten bleibt bis dahin beim
-  bisherigen globalen Primärmonitorpfad; gespeicherte spezifische und mehrere
-  Profilziele werden jedoch von der Profil-Engine ausgeführt.
+- Die Profilverwaltung unterstützt die explizite Wahl des dynamischen
+  Primärmonitors, spezifische Monitore und mehrere Ziele. Nicht persistierbare,
+  mehrdeutige und geklonte Endpoints werden fail-safe nicht angeboten oder
+  blockiert. Das manuelle Tray-Schalten bleibt weiterhin beim bisherigen
+  globalen Primärmonitorpfad; eine targetbezogene Tray-Hierarchie ist noch
+  ausstehend.
 - Geschützte oder bereits beendete Prozesse können nicht als Profil verwendet
   werden.
 - Epic, GOG und sonstige Launcher werden derzeit nicht eigens erkannt. Sie
@@ -157,9 +169,13 @@ Anwendung ist für Windows bestimmt.
    prüfen, dass das Tool ohne Dialog im Infobereich erscheint.
 3. Autostart wieder deaktivieren und nach der nächsten Anmeldung prüfen, dass
    es nicht mehr automatisch startet.
-4. Ein Profil für die tatsächliche `helldivers2.exe` (vorzugsweise mit vollem
-   EXE-Pfad) anlegen, Helldivers 2 starten und den Wechsel am Primärmonitor
-   beobachten.
-5. Helldivers 2 beenden und prüfen, dass der ursprüngliche Modus
-   wiederhergestellt wird. Diese Abnahme muss auf dem Zielsystem erfolgen; ein
+4. In **Profile verwalten...** prüfen, dass ein neues Profil keinen Monitor
+   vorauswählt. Den dynamischen Primärmonitor und – sofern vorhanden – einen
+   spezifischen zweiten Monitor jeweils mit passendem Modus hinzufügen; Profil
+   speichern, erneut öffnen und Zielbeschriftungen und Modi prüfen.
+5. Ein Profil für die tatsächliche `helldivers2.exe` (vorzugsweise mit vollem
+   EXE-Pfad) anlegen, Helldivers 2 starten und den Wechsel an allen gewählten
+   Monitoren beobachten.
+6. Helldivers 2 beenden und prüfen, dass die ursprünglichen Modi
+   wiederhergestellt werden. Diese Abnahme muss auf dem Zielsystem erfolgen; ein
    realer Spieltest ist nicht Bestandteil des automatisierten Tests.

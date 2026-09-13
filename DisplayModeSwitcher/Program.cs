@@ -34,7 +34,7 @@ namespace DisplayModeSwitcher
 
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
-            Application.Run(new TrayForm(store, autostart, manager));
+            Application.Run(new TrayForm(store, autostart, manager, topology));
         }
     }
 }

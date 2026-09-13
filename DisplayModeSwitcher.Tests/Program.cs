@@ -108,7 +108,20 @@ var tests = new (string Name, Action Run)[]
     ("Target-Profilengine bewahrt Stop-Schulden aus Steam Pending", TargetedProfileMonitorTests.StopPendingDebtRemainsManaged),
     ("Target-Profilengine begrenzt das Steam-Wartefenster", TargetedProfileMonitorTests.PendingTimeoutIsBounded),
     ("Target-Profilengine restauriert ToolChanged-false Ziele nicht", TargetedProfileMonitorTests.UnchangedTargetsAreNotRestored),
-    ("Target-Profilengine liefert per-target Diagnose", TargetedProfileMonitorTests.DiagnosticsArePerTarget)
+    ("Target-Profilengine liefert per-target Diagnose", TargetedProfileMonitorTests.DiagnosticsArePerTarget),
+    ("Zielentwurf startet ohne implizite Monitorwahl", ProfileTargetEditorTests.NewDraftHasNoImplicitTarget),
+    ("Zielentwurf speichert spezifische Snapshots und mehrere Ziele", ProfileTargetEditorTests.AddsSpecificAndMultipleTargetsWithSnapshots),
+    ("Zielentwurf blockiert doppelte Selektoren und physische Ziele", ProfileTargetEditorTests.DuplicateSelectorsAndPhysicalTargetsAreBlocked),
+    ("Zielentwurf liest und dedupliziert nur Modi der gewählten Quelle", ProfileTargetEditorTests.ModesComeOnlyFromSelectedSourceAndAreDeduplicated),
+    ("Zielentwurf lädt ohne gespeicherte Daten zu verändern", ProfileTargetEditorTests.LoadingAndReadingNeverMutatesStoredTargets),
+    ("Fehlende und mehrdeutige Editorziele bleiben fail-safe erhalten", ProfileTargetEditorTests.MissingAndAmbiguousTargetsArePreservedFailSafe),
+    ("Neuzuordnung ist ausschließlich bestätigt und explizit", ProfileTargetEditorTests.RebindRequiresConfirmationAndDoesNotAutoMatch),
+    ("Neuzuordnung verlangt einen gültigen Modus der neuen Quelle", ProfileTargetEditorTests.RebindRequiresAValidNewMode),
+    ("Nicht verfügbarer gespeicherter Modus bleibt sichtbar", ProfileTargetEditorTests.UnavailableStoredModeRemainsVisible),
+    ("Editoridentität bleibt bei GDI-Neuordnung am Gerätepfad", ProfileTargetEditorTests.GdiReorderDoesNotChangeSpecificChoice),
+    ("Klon- und unpersistierbare Endpoints sind nicht auswählbar", ProfileTargetEditorTests.CloneAndUnpersistableEndpointsCannotBeChosen),
+    ("Unsichere Quellen und mehrdeutige native Modi sind nicht auswählbar", ProfileTargetEditorTests.UnsafeSourcesAndAmbiguousNativeModesCannotBeChosen),
+    ("Tiefe Zieländerungen markieren den Entwurf als geändert", ProfileTargetEditorTests.DirtyStateTracksDeepTargetChanges)
 };
 
 var failures = new List<string>();

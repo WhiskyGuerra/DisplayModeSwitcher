@@ -10,16 +10,18 @@ namespace DisplayModeSwitcher
         private readonly ProfileStore _store;
         private readonly AutostartService _autostart;
         private readonly ProfileManager _profileManager;
+        private readonly IDisplayTopologyService _topology;
         private readonly NotifyIcon trayIcon;
         private readonly ContextMenuStrip contextMenu;
         private readonly ToolStripMenuItem _statusItem;
         private readonly System.Windows.Forms.Timer _statusTimer;
         private bool _clipboardErrorShown;
-        public TrayForm(ProfileStore store, AutostartService autostart, ProfileManager profileManager)
+        public TrayForm(ProfileStore store, AutostartService autostart, ProfileManager profileManager, IDisplayTopologyService topology)
         {
             _store = store;
             _autostart = autostart;
             _profileManager = profileManager;
+            _topology = topology;
             contextMenu = new ContextMenuStrip();
 
             AddGroupedResolutions();
@@ -51,7 +53,7 @@ namespace DisplayModeSwitcher
             var manageItem = new ToolStripMenuItem("Profile verwalten...");
             manageItem.Click += (s, e) =>
             {
-                using var form = new ProfileManagerForm(_store, _profileManager);
+                using var form = new ProfileManagerForm(_store, _profileManager, _topology);
                 form.ShowDialog();
             };
             contextMenu.Items.Add(manageItem);
