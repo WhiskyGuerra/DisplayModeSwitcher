@@ -16,7 +16,11 @@ var tests = new (string Name, Action Run)[]
     ("Profile speichern, laden und schützen beschädigte Daten", ProfilePersistenceHandlesErrors),
     ("Legacy-Profile werden ohne Löschen migriert", LegacyProfilesMigrateSafely),
     ("Prozessnamen verwenden verständliche Fallbacks", ProcessNamesUseFriendlyFallbacks),
-    ("Prozessliste filtert, dedupliziert und sortiert", ProcessListFiltersDeduplicatesAndSorts)
+    ("Prozessliste filtert, dedupliziert und sortiert", ProcessListFiltersDeduplicatesAndSorts),
+    ("Generische Metadaten fallen auf Fenstertitel zurück", GenericMetadataFallsBackToWindowTitle),
+    ("Steam-Manifeste liefern Spielnamen robust", SteamManifestNamesAreResolved),
+    ("Installationsordner ist der letzte Namensfallback", InstallationFolderIsFallback),
+    ("Windows-Hosts und eigene Instanzen werden gefiltert", WindowsHostsAndToolAreFiltered)
 };
 
 var failures = new List<string>();
@@ -265,6 +269,53 @@ static void ProcessListFiltersDeduplicatesAndSorts()
     var allItems = ProcessPresentation.CreateItems(processes, tool, includeBackgroundProcesses: true);
     Equal(3, allItems.Count);
     True(allItems.Any(item => item.Path == background));
+}
+
+static void GenericMetadataFallsBackToWindowTitle()
+{
+    Equal("RV There Yet?", ProcessPresentation.GetFriendlyName("Ride.exe", "BootstrapPackagedGame", ".NET", "RV There Yet?"));
+}
+
+static void SteamManifestNamesAreResolved()
+{
+    WithTemporaryDirectory(directory =>
+    {
+        var steamApps = Path.Combine(directory, "steamapps");
+        var gameDirectory = Path.Combine(steamApps, "common", "RideFolder", "Binaries", "Win64");
+        Directory.CreateDirectory(gameDirectory);
+        var executable = Path.Combine(gameDirectory, "Ride.exe");
+        File.WriteAllText(Path.Combine(steamApps, "appmanifest_123.acf"), "\"AppState\" { \"installdir\" \"ridefolder\" \"name\" \"RV There Yet?\" }");
+        Equal("RV There Yet?", ProcessPresentation.FindSteamGameName(executable));
+        File.WriteAllText(Path.Combine(steamApps, "appmanifest_456.acf"), "unlesbar \"name\"");
+        Equal("RV There Yet?", ProcessPresentation.FindSteamGameName(executable));
+    });
+}
+
+static void InstallationFolderIsFallback()
+{
+    Equal("My Game", ProcessPresentation.GetFriendlyName("game.exe", "BootstrapPackagedGame", ".NET", null, null, "My Game"));
+    Equal("game.exe", ProcessPresentation.GetFriendlyName("game.exe", null, null, null, null, "bin"));
+}
+
+static void WindowsHostsAndToolAreFiltered()
+{
+    var root = Path.Combine(Path.GetTempPath(), "dms-process-filter");
+    var windows = Path.Combine(root, "Windows");
+    var app = Path.Combine(root, "Apps", "game.exe");
+    var toolElsewhere = Path.Combine(root, "Other", "DisplayModeSwitcher.exe");
+    var host = Path.Combine(windows, "System32", "host.exe");
+    var items = new[]
+    {
+        new ProcessDisplayInfo(new(1, DateTime.UnixEpoch, host), null, null, "Windows Host", 1),
+        new ProcessDisplayInfo(new(2, DateTime.UnixEpoch, toolElsewhere), null, null, "Tool", 1),
+        new ProcessDisplayInfo(new(3, DateTime.UnixEpoch, app), "Game", null, "Game", 1)
+    };
+    var normal = ProcessPresentation.CreateItems(items, Path.Combine(root, "DisplayModeSwitcher.exe"), false, windows);
+    Equal(1, normal.Count);
+    var all = ProcessPresentation.CreateItems(items, Path.Combine(root, "DisplayModeSwitcher.exe"), true, windows);
+    Equal(2, all.Count);
+    True(all.Any(item => item.Path == host));
+    True(!all.Any(item => item.Path == toolElsewhere));
 }
 
 static DisplayMode Mode(uint width, uint height, uint frequency) => new()
