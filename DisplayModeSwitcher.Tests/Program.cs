@@ -128,7 +128,11 @@ var tests = new (string Name, Action Run)[]
     ("Native Modusdubletten mit verschiedener Farbtiefe bleiben ein logischer Modus", ProfileTargetEditorTests.NativeDuplicatesWithDifferentBppRemainOneLogicalMode),
     ("Tiefe Zieländerungen markieren den Entwurf als geändert", ProfileTargetEditorTests.DirtyStateTracksDeepTargetChanges),
     ("Profilspeichern übernimmt nur Modusänderungen am ausgewählten Ziel", ProfileTargetEditorTests.ProfileSaveAcceptsOnlyModeChangeOnSelectedTarget),
-    ("Profilspeichern blockiert während der Modus noch lädt", ProfileTargetEditorTests.ProfileSaveBlocksWhileSelectedTargetModeIsLoading)
+    ("Profilspeichern blockiert während der Modus noch lädt", ProfileTargetEditorTests.ProfileSaveBlocksWhileSelectedTargetModeIsLoading),
+    ("Manuelles Tray-Schalten übergibt nur den expliziten Gerätepfad", ManualDisplaySwitcherTests.AppliesOnlyExplicitSelectedPathAndKeepsMonitorsSeparate),
+    ("Unsichere Tray-Ziele und aktive Profile blockieren manuelles Schalten", ManualDisplaySwitcherTests.UnsafeEndpointsAndActiveProfilesAreBlocked),
+    ("Tray-Moduslisten fassen logische Treiberdubletten zusammen", ManualDisplaySwitcherTests.LogicalModeDuplicatesAreCollapsed),
+    ("Fehler der gezielten Pipeline erreichen den manuellen Aufrufer", ManualDisplaySwitcherTests.ApplyErrorsArePropagated)
 };
 
 var failures = new List<string>();

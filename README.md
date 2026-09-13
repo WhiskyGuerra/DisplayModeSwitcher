@@ -124,9 +124,13 @@ Dateifehler.
 - Die Profilverwaltung unterstützt die explizite Wahl des dynamischen
   Primärmonitors, spezifische Monitore und mehrere Ziele. Nicht persistierbare,
   mehrdeutige und geklonte Endpoints werden fail-safe nicht angeboten oder
-  blockiert. Das manuelle Tray-Schalten bleibt weiterhin beim bisherigen
-  globalen Primärmonitorpfad; eine targetbezogene Tray-Hierarchie ist noch
-  ausstehend.
+  blockiert. Das Tray bietet für manuelle Wechsel die Hierarchie
+  **Monitor → Auflösung → Hz**. Dabei wird ausschließlich der angeklickte
+  physische Monitor über seinen stabilen Gerätepfad temporär umgeschaltet;
+  es entsteht weder ein Profil noch ein automatischer Restore-Anspruch.
+  Unklare, nicht persistierbare oder geklonte Ziele bleiben deaktiviert. Solange
+  die Profilüberwachung nicht wartet, ist das manuelle Umschalten gesperrt,
+  damit beide Wege nicht gegeneinander arbeiten.
 - Geschützte oder bereits beendete Prozesse können nicht als Profil verwendet
   werden.
 - Epic, GOG und sonstige Launcher werden derzeit nicht eigens erkannt. Sie

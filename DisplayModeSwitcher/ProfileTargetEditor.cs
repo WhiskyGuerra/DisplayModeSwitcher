@@ -87,35 +87,7 @@ public sealed class ProfileTargetEditor
         if (!match.Success || match.Endpoint is null)
             return ModeListResult.Fail(match.Message, preservedMode);
 
-        try
-        {
-            var currentResult = _topology.GetCurrentMode(match.Endpoint);
-            if (!currentResult.Success || currentResult.Value is null || !IsNativeModeValid(currentResult.Value))
-                return ModeListResult.Fail(currentResult.Error?.Message ?? "Der aktuelle Anzeigemodus konnte nicht sicher gelesen werden.", preservedMode);
-
-            var result = _topology.GetAvailableModes(match.Endpoint);
-            if (!result.Success || result.Value is null)
-                return ModeListResult.Fail(result.Error?.Message ?? "Die Anzeigemodi konnten nicht gelesen werden.", preservedMode);
-
-            var modes = result.Value
-                .Where(IsNativeModeValid)
-                .Where(mode => mode.Orientation == currentResult.Value.Orientation)
-                .Distinct()
-                .GroupBy(mode => (mode.Width, mode.Height, mode.Frequency))
-                .Select(group => EndpointDisplayModeCandidateSelector.Select(group, currentResult.Value))
-                .OfType<EndpointDisplayMode>()
-                .OrderByDescending(mode => mode.Width)
-                .ThenByDescending(mode => mode.Height)
-                .ThenByDescending(mode => mode.Frequency)
-                .Select(ToDisplayMode)
-                .ToList();
-            AddPreservedMode(modes, preservedMode);
-            return ModeListResult.Ok(modes);
-        }
-        catch (Exception ex)
-        {
-            return ModeListResult.Fail($"Die Anzeigemodi konnten nicht gelesen werden: {ex.Message}", preservedMode);
-        }
+        return DisplayModeCatalog.Read(_topology, match.Endpoint, preservedMode);
     }
 
     public EditorResult Add(MonitorChoice? choice, DisplayMode? mode)
@@ -288,9 +260,6 @@ public sealed class ProfileTargetEditor
 
     private static bool SameMode(DisplayMode left, DisplayMode right) =>
         left.Width == right.Width && left.Height == right.Height && left.Frequency == right.Frequency;
-
-    private static bool IsNativeModeValid(EndpointDisplayMode mode) =>
-        mode.Width > 0 && mode.Height > 0 && mode.Frequency > 0 && mode.BitsPerPixel > 0;
 
     private static MonitorMatchResult ResolveSafe(DisplayTopologySnapshot snapshot, MonitorSelector selector)
     {

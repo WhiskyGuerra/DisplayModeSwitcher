@@ -109,8 +109,8 @@ public interface ITargetedDisplayService
 
 /// <summary>
 /// Führt ausschließlich explizit aufgelöste, quellbezogene Modusänderungen aus.
-/// Die Profil-Laufzeit nutzt diese Schicht; das manuelle Tray-Schalten bleibt
-/// bis zur späteren Monitorwahl-Oberfläche getrennt.
+/// Profil-Laufzeit und bewusst gewählte manuelle Tray-Aktionen nutzen diese
+/// Schicht; beide bleiben dadurch an konkrete physische Monitore gebunden.
 /// </summary>
 public sealed class TargetedDisplayService : ITargetedDisplayService
 {
