@@ -62,6 +62,8 @@ public static class DiagnosticReportFormatter
             $"Profil: {data.MonitorStatus.ProfileProcess ?? "–"}",
             $"Startart: {FormatLaunchStrategy(data.MonitorStatus.LaunchStrategy)}",
             $"Zielmodus: {FormatMode(data.MonitorStatus.TargetMode)}",
+            $"Richtlinie: {FormatPolicy(data.MonitorStatus.Policy)}",
+            $"Nachsetzungen: {FormatReapplyCount(data.MonitorStatus)}",
             $"Letzte Änderung (UTC): {FormatTime(data.MonitorStatus.LastChangedUtc)}",
             $"Letztes Ergebnis: {data.MonitorStatus.LastResult ?? "–"}",
             $"Wiederholungen: {data.MonitorStatus.RetryCount}",
@@ -104,6 +106,19 @@ public static class DiagnosticReportFormatter
     {
         LaunchStrategy.Steam => "Steam",
         LaunchStrategy.Direct => "Direkt",
+        _ => "–"
+    };
+
+    public static string FormatPolicy(ProfileRetentionPolicy? policy) => policy is null
+        ? "–"
+        : ProfileRetentionPolicyText.ToDisplayName(policy.Value);
+
+    private static string FormatReapplyCount(ProfileMonitorStatus status) => status.Policy switch
+    {
+        _ when status.State == ProfileMonitorState.PendingLaunch => $"{status.ReapplyCount}/unbegrenzt (Steam-Wartephase)",
+        ProfileRetentionPolicy.Once => $"{status.ReapplyCount}/0",
+        ProfileRetentionPolicy.Startup => $"{status.ReapplyCount}/3",
+        ProfileRetentionPolicy.Continuous => $"{status.ReapplyCount}/unbegrenzt",
         _ => "–"
     };
 

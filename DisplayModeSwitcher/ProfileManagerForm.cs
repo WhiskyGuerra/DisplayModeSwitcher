@@ -12,6 +12,7 @@ namespace DisplayModeSwitcher
         private readonly ProfileManager _profileManager;
         private readonly ComboBox _processBox;
         private readonly ComboBox _modeBox;
+        private readonly ComboBox _policyBox;
         private readonly Button _addButton;
         private readonly Button _removeButton;
         private readonly Button _browseButton;
@@ -34,8 +35,14 @@ namespace DisplayModeSwitcher
             public string ProcessKey { get; set; } = string.Empty;
             public ProcessPresentationItem Presentation { get; set; } = new(string.Empty, string.Empty, string.Empty);
             public DisplayMode Mode { get; set; } = new DisplayMode();
+            public ProfileRetentionPolicy Policy { get; set; } = ProfileRetentionPolicy.Startup;
             public bool IsMissingExecutable { get; set; }
-            public override string ToString() => $"{Presentation} → {Mode.Width}x{Mode.Height}@{Mode.Frequency}Hz" + (IsMissingExecutable ? " — Datei fehlt" : string.Empty);
+            public override string ToString() => $"{Presentation} → {Mode.Width}x{Mode.Height}@{Mode.Frequency}Hz · {ProfileRetentionPolicyText.ToShortDisplayName(Policy)}" + (IsMissingExecutable ? " — Datei fehlt" : string.Empty);
+        }
+
+        private sealed record PolicyListItem(ProfileRetentionPolicy Policy)
+        {
+            public override string ToString() => ProfileRetentionPolicyText.ToDisplayName(Policy);
         }
 
         public ProfileManagerForm(ProfileStore store, ProfileManager profileManager, IProcessProvider? processProvider = null)
@@ -46,7 +53,7 @@ namespace DisplayModeSwitcher
 
             Text = "Profile verwalten";
             Width = 660;
-            Height = 405;
+            Height = 435;
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
             MinimizeBox = false;
@@ -54,6 +61,11 @@ namespace DisplayModeSwitcher
             _processBox = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Left = 10, Top = 10, Width = 360 };
             _modeBox = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Left = 380, Top = 10, Width = 250 };
             _showAllProcesses = new CheckBox { Text = "Alle Prozesse anzeigen", Left = 10, Top = 43, AutoSize = true };
+            var policyLabel = new Label { Text = "Modus beibehalten:", Left = 250, Top = 44, AutoSize = true };
+            _policyBox = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Left = 380, Top = 40, Width = 250 };
+            foreach (var policy in Enum.GetValues<ProfileRetentionPolicy>())
+                _policyBox.Items.Add(new PolicyListItem(policy));
+            SelectPolicy(ProfileRetentionPolicy.Startup);
             _browseButton = new Button { Text = "Durchsuchen…", Left = 10, Top = 70, Width = 105 };
             _addButton = new Button { Text = "Profil speichern", Left = 125, Top = 70, Width = 110 };
             _newButton = new Button { Text = "Neu", Left = 245, Top = 70, Width = 80 };
@@ -61,9 +73,9 @@ namespace DisplayModeSwitcher
             _launchButton = new Button { Text = "Im Profilmodus starten", Left = 445, Top = 70, Width = 185, Enabled = false };
             _editStateLabel = new Label { Text = "Neues Profil", Left = 10, Top = 103, AutoSize = true };
             _launchTypeLabel = new Label { Text = "Startart nur beim Klick: –", Left = 445, Top = 105, AutoSize = true };
-            _profileList = new ListBox { Left = 10, Top = 128, Width = 620, Height = 225, HorizontalScrollbar = true };
+            _profileList = new ListBox { Left = 10, Top = 128, Width = 620, Height = 255, HorizontalScrollbar = true };
 
-            Controls.AddRange(new Control[] { _processBox, _modeBox, _showAllProcesses, _browseButton, _addButton, _newButton, _removeButton, _launchButton, _editStateLabel, _launchTypeLabel, _profileList });
+            Controls.AddRange(new Control[] { _processBox, _modeBox, _showAllProcesses, policyLabel, _policyBox, _browseButton, _addButton, _newButton, _removeButton, _launchButton, _editStateLabel, _launchTypeLabel, _profileList });
 
             Load += ProfileManagerForm_Load;
             _addButton.Click += OnAdd;
@@ -147,7 +159,7 @@ namespace DisplayModeSwitcher
             _profileList.Items.Clear();
             foreach (var kvp in _store.Profiles)
             {
-                _profileList.Items.Add(new ProfileListItem { ProcessKey = kvp.Key, Presentation = ProcessPresentation.CreateProfileItem(kvp.Key), Mode = kvp.Value, IsMissingExecutable = ProcessPresentation.IsMissingProfileExecutable(kvp.Key) });
+                _profileList.Items.Add(new ProfileListItem { ProcessKey = kvp.Key, Presentation = ProcessPresentation.CreateProfileItem(kvp.Key), Mode = kvp.Value.Mode, Policy = kvp.Value.Policy, IsMissingExecutable = ProcessPresentation.IsMissingProfileExecutable(kvp.Key) });
             }
             UpdateLaunchButton();
         }
@@ -155,10 +167,11 @@ namespace DisplayModeSwitcher
         private void OnAdd(object? sender, EventArgs e)
         {
             if (_processBox.SelectedItem is not ProcessPresentationItem processItem ||
-                _modeBox.SelectedItem is not DisplayMode mode)
+                _modeBox.SelectedItem is not DisplayMode mode ||
+                _policyBox.SelectedItem is not PolicyListItem policyItem)
                 return;
             var process = processItem.Path;
-            var result = ProfileEditWorkflow.Save(_store, _editingProcessKey, process, mode);
+            var result = ProfileEditWorkflow.Save(_store, _editingProcessKey, process, mode, policyItem.Policy);
             if (!result.Success)
             {
                 MessageBox.Show(result.Error ?? "Das Profil konnte nicht gespeichert werden.", "Profile", MessageBoxButtons.OK, MessageBoxIcon.Error);
@@ -205,6 +218,7 @@ namespace DisplayModeSwitcher
             _addButton.Text = "Profil aktualisieren";
             SelectProcessPath(item.ProcessKey);
             SelectMode(item.Mode);
+            SelectPolicy(item.Policy);
             UpdateLaunchButton();
             RefreshLaunchType(item);
         }
@@ -217,6 +231,7 @@ namespace DisplayModeSwitcher
             _profileList.ClearSelected();
             _launchTypeLoadVersion++;
             _launchTypeLabel.Text = "Startart nur beim Klick: –";
+            SelectPolicy(ProfileRetentionPolicy.Startup);
             UpdateLaunchButton();
         }
 
@@ -292,23 +307,36 @@ namespace DisplayModeSwitcher
         private void SelectMode(DisplayMode mode)
         {
             var item = _modeBox.Items.OfType<DisplayMode>().FirstOrDefault(candidate => candidate.Width == mode.Width && candidate.Height == mode.Height && candidate.Frequency == mode.Frequency);
-            if (item is not null) _modeBox.SelectedItem = item;
+            if (item is null)
+            {
+                item = new DisplayMode
+                {
+                    Width = mode.Width,
+                    Height = mode.Height,
+                    Frequency = mode.Frequency,
+                    Label = $"{mode.Width}x{mode.Height} @ {mode.Frequency}Hz (derzeit nicht verfügbar)"
+                };
+                _modeBox.Items.Add(item);
+            }
+            _modeBox.SelectedItem = item;
+        }
+
+        private void SelectPolicy(ProfileRetentionPolicy policy)
+        {
+            var item = _policyBox.Items.OfType<PolicyListItem>().FirstOrDefault(candidate => candidate.Policy == policy);
+            if (item is not null) _policyBox.SelectedItem = item;
         }
 
         private void OnRemove(object? sender, EventArgs e)
         {
             if (_profileList.SelectedItem is not ProfileListItem item)
                 return;
-            if (_store.Profiles.TryRemove(item.ProcessKey, out _))
+            var result = ProfileEditWorkflow.Remove(_store, item.ProcessKey);
+            if (!result.Success)
             {
-                var result = _store.Save();
-                if (!result.Success)
-                {
-                    _store.Profiles[item.ProcessKey] = item.Mode;
-                    MessageBox.Show(result.Error ?? "Das Profil konnte nicht entfernt werden.", "Profile", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                }
-                RefreshProfileList();
+                MessageBox.Show(result.Error ?? "Das Profil konnte nicht entfernt werden.", "Profile", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
+            RefreshProfileList();
         }
     }
 }

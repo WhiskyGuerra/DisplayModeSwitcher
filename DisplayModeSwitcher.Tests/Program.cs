@@ -26,6 +26,7 @@ var tests = new (string Name, Action Run)[]
     ("Windows-Hosts und eigene Instanzen werden gefiltert", WindowsHostsAndToolAreFiltered),
     ("Profilbearbeitung aktualisiert und verschiebt Profile", ProfileEditingUpdatesAndMovesProfile),
     ("Profilbearbeitung wechselt Schlüssel mit Rückrollschutz", ProfileEditingRollsBackOnSaveFailure),
+    ("Profilentfernung stellt bei Speicherfehler vollständig zurück", ProfileRemovalRollsBackOnSaveFailure),
     ("Fehlende EXE und Legacy-Profile werden korrekt unterschieden", MissingExecutableDoesNotFlagLegacyProfile),
     ("Diagnosepuffer ist begrenzt und chronologisch", DiagnosticBufferIsBounded),
     ("Diagnosebericht formatiert Snapshot und Ereignisse", DiagnosticReportFormatsSnapshot),
@@ -47,7 +48,17 @@ var tests = new (string Name, Action Run)[]
     ("Steam-Timeout und Stop stellen den Originalmodus wieder her", SteamTimeoutAndStopRestoreOriginal),
     ("Steam-Startfehler und dauerhafter Displayfehler rollen zurück", SteamFailuresRollBack),
     ("Steam-Restorefehler bleibt zur Wiederholung verwaltet", SteamRestoreFailureRemainsManaged),
-    ("Parallele Steam-Starts lösen den URI höchstens einmal aus", ParallelSteamLaunchStartsOnce)
+    ("Parallele Steam-Starts lösen den URI höchstens einmal aus", ParallelSteamLaunchStartsOnce),
+    ("Profilrichtlinien migrieren, speichern und validieren sicher", ProfilePoliciesPersistAndValidate),
+    ("Einmalige Richtlinie setzt während der Laufzeit nicht nach", OncePolicyDoesNotReapply),
+    ("Startphasenrichtlinie begrenzt Zeit, Anzahl und Diagnose", StartupPolicyIsBoundedAndQuiet),
+    ("Dauerhafte Richtlinie setzt weiterhin rate-limitiert nach", ContinuousPolicyKeepsReapplying),
+    ("Initiale Aktivierungsfehler werden für alle Richtlinien wiederholt", InitialFailuresRetryForEveryPolicy),
+    ("Anzeigemodi verwenden eine explizite Ein-Hertz-Toleranz", DisplayModeEquivalenceUsesOneHertzTolerance),
+    ("Wiederherstellung vermeidet tolerierbare Hertz-Wechsel", RestoreUsesFrequencyTolerance),
+    ("Abweichungsdiagnose enthält Modus, Richtlinie und Nachsetzung", DeviationDiagnosticsAreComplete),
+    ("Steam-Wartephase bleibt aktiv und startet danach die Profilrichtlinie", SteamPendingAndActivePolicyAreSeparated),
+    ("Direktstart beginnt die Startphase beim erfolgreichen Start", DirectLaunchStartsPolicyWindowImmediately)
 };
 
 var failures = new List<string>();
@@ -94,6 +105,7 @@ static void ActiveTargetIsNotReapplied()
 {
     var fixture = new MonitorFixture();
     fixture.Monitor.Poll(fixture.Now);
+    fixture.Display.Current = Mode(fixture.Target.Width, fixture.Target.Height, fixture.Target.Frequency - 1);
     fixture.Monitor.Poll(fixture.Now.AddSeconds(1));
     fixture.Monitor.Poll(fixture.Now.AddSeconds(5));
     fixture.Monitor.Poll(fixture.Now.AddSeconds(10));
@@ -102,12 +114,15 @@ static void ActiveTargetIsNotReapplied()
 
 static void StopRestoresOriginal()
 {
-    var fixture = new MonitorFixture();
-    fixture.Monitor.Poll(fixture.Now);
-    var result = fixture.Monitor.Stop();
-    True(result.Success, result.Error);
-    Equal(2, fixture.Display.SetCalls.Count);
-    Equal(fixture.Original, fixture.Display.Current);
+    foreach (var policy in Enum.GetValues<ProfileRetentionPolicy>())
+    {
+        var fixture = new MonitorFixture(policy);
+        fixture.Monitor.Poll(fixture.Now);
+        var result = fixture.Monitor.Stop();
+        True(result.Success, result.Error);
+        Equal(2, fixture.Display.SetCalls.Count);
+        Equal(fixture.Original, fixture.Display.Current);
+    }
 }
 
 static void StopWithoutToolChangeDoesNotRestore()
@@ -150,9 +165,9 @@ static void AmbiguousLegacyDoesNotSwitch()
             new(2, DateTime.UnixEpoch.AddSeconds(1), @"D:\Two\game.exe")
         ]
     };
-    var profiles = new ConcurrentDictionary<string, DisplayMode>(StringComparer.OrdinalIgnoreCase)
+    var profiles = new ConcurrentDictionary<string, DisplayProfile>(StringComparer.OrdinalIgnoreCase)
     {
-        ["game.exe"] = Mode(1280, 720, 60)
+        ["game.exe"] = Profile(Mode(1280, 720, 60))
     };
     var monitor = new ProfileMonitor(profiles, display, processes);
     monitor.Poll(DateTime.UtcNow);
@@ -177,7 +192,7 @@ static void ReusedPidRestoresOriginal()
 
 static void ManagerLifecycleIsCancellable()
 {
-    var profiles = new ConcurrentDictionary<string, DisplayMode>(StringComparer.OrdinalIgnoreCase);
+    var profiles = new ConcurrentDictionary<string, DisplayProfile>(StringComparer.OrdinalIgnoreCase);
     var manager = new ProfileManager(profiles, new FakeDisplay(), new FakeProcesses());
     manager.Start();
     manager.Start();
@@ -200,12 +215,14 @@ static void DiagnosticBufferIsBounded()
 
 static void DiagnosticReportFormatsSnapshot()
 {
-    var status = new ProfileMonitorStatus(ProfileMonitorState.RetryPending, "Erneuter Versuch folgt.", @"C:\Games\game.exe", Mode(1280, 720, 60), DateTime.UnixEpoch, "Testfehler", 2, LaunchStrategy.Direct);
+    var status = new ProfileMonitorStatus(ProfileMonitorState.RetryPending, "Erneuter Versuch folgt.", @"C:\Games\game.exe", Mode(1280, 720, 60), DateTime.UnixEpoch, "Testfehler", 2, LaunchStrategy.Direct, ProfileRetentionPolicy.Startup, 1);
     var report = DiagnosticReportFormatter.Format(new DiagnosticReportData(DateTime.UnixEpoch, "1.2.3", "Windows Test", "8.0", "X64", "1920x1080 @ 60Hz", status,
         [new ProfileMonitorDiagnosticEvent(DateTime.UnixEpoch, "Profilmodus konnte nicht angewendet werden.")]));
     True(report.Contains("App-Version: 1.2.3"));
     True(report.Contains("Zustand: Wiederholung ausstehend"));
     True(report.Contains("Startart: Direkt"));
+    True(report.Contains("Richtlinie: Während Startphase stabilisieren"));
+    True(report.Contains("Nachsetzungen: 1/3"));
     True(report.Contains("Wiederholungen: 2"));
     True(report.Contains("Profilmodus konnte nicht angewendet werden."));
     Equal("Wartet auf gestartete Anwendung", DiagnosticReportFormatter.DisplayState(ProfileMonitorState.PendingLaunch));
@@ -347,7 +364,7 @@ static void ActiveProfileRejectsLaunch()
 static void InvalidLaunchProfilesHaveNoSideEffects()
 {
     var fixture = new LaunchFixture(fileExists: _ => false);
-    fixture.Profiles["game.exe"] = fixture.Target;
+    fixture.Profiles["game.exe"] = Profile(fixture.Target);
 
     var legacy = fixture.Monitor.LaunchProfileApplication("game.exe", fixture.Now);
     var missing = fixture.Monitor.LaunchProfileApplication(fixture.Path, fixture.Now);
@@ -382,7 +399,7 @@ static void ProfilePersistenceHandlesErrors()
     {
         var path = Path.Combine(directory, "profiles.json");
         var store = new ProfileStore(path);
-        store.Profiles[@"C:\Games\game.exe"] = Mode(2560, 1440, 144);
+        store.Profiles[@"C:\Games\game.exe"] = Profile(Mode(2560, 1440, 144));
         True(store.Save().Success);
 
         var loaded = new ProfileStore(path);
@@ -431,6 +448,27 @@ static void LegacyProfilesMigrateSafely()
         True(!File.Exists(target));
         Equal("not-json", File.ReadAllText(legacy));
         True(!store.Save().Success);
+    });
+
+    WithTemporaryDirectory(directory =>
+    {
+        var legacy = Path.Combine(directory, "legacy.json");
+        var targetDirectory = Path.Combine(directory, "target");
+        var target = Path.Combine(targetDirectory, "profiles.json");
+        Directory.CreateDirectory(targetDirectory);
+        File.WriteAllText(target, "[{\"Process\":\"existing.exe\",\"Width\":1920,\"Height\":1080,\"Frequency\":60}]");
+        var store = new ProfileStore(target, legacy);
+        File.Delete(target);
+        Directory.Delete(targetDirectory);
+        File.WriteAllText(targetDirectory, "blockiert den Zielordner");
+        File.WriteAllText(legacy, "[{\"Process\":\"legacy.exe\",\"Width\":1280,\"Height\":720,\"Frequency\":60}]");
+
+        True(!store.Load().Success);
+        Equal(1, store.Profiles.Count);
+        True(store.Profiles.ContainsKey("existing.exe"));
+        True(!store.Profiles.ContainsKey("legacy.exe"));
+        True(!store.Save().Success);
+        True(File.Exists(legacy));
     });
 }
 
@@ -623,6 +661,8 @@ static void SteamPendingKeepsTargetRateLimited()
     fixture.Monitor.Poll(fixture.Now);
     Equal(2, fixture.Display.SetCalls.Count);
     Equal(fixture.Target, fixture.Display.Current);
+    Equal(1, fixture.Monitor.Status.ReapplyCount);
+    True(fixture.Monitor.DiagnosticEvents.Any(item => item.Message.Contains("Nachsetzung 1/unbegrenzt", StringComparison.Ordinal)));
     fixture.Display.Current = fixture.Original;
     fixture.Monitor.Poll(fixture.Now.AddSeconds(1));
     Equal(2, fixture.Display.SetCalls.Count);
@@ -714,6 +754,234 @@ static void ParallelSteamLaunchStartsOnce()
     Equal(1, new[] { first.Result, second.Result }.Count(result => result.Success));
 }
 
+static void ProfilePoliciesPersistAndValidate()
+{
+    WithTemporaryDirectory(directory =>
+    {
+        var path = Path.Combine(directory, "profiles.json");
+        File.WriteAllText(path, "[{\"Process\":\"legacy.exe\",\"Width\":1920,\"Height\":1080,\"Frequency\":60}]");
+        var legacy = new ProfileStore(path);
+        Equal(ProfileRetentionPolicy.Startup, legacy.Profiles["legacy.exe"].Policy);
+
+        legacy.Profiles.Clear();
+        foreach (var policy in Enum.GetValues<ProfileRetentionPolicy>())
+            legacy.Profiles[$"{policy}.exe"] = Profile(Mode(1280, 720, 60), policy);
+        True(legacy.Save().Success);
+
+        var json = File.ReadAllText(path);
+        foreach (var policy in Enum.GetValues<ProfileRetentionPolicy>())
+            True(json.Contains($"\"Policy\": \"{policy}\"", StringComparison.Ordinal));
+
+        var roundTrip = new ProfileStore(path);
+        foreach (var policy in Enum.GetValues<ProfileRetentionPolicy>())
+            Equal(policy, roundTrip.Profiles[$"{policy}.exe"].Policy);
+
+        const string invalid = "[{\"Process\":\"game.exe\",\"Width\":1920,\"Height\":1080,\"Frequency\":60,\"Policy\":\"Forever\"}]";
+        File.WriteAllText(path, invalid);
+        True(!roundTrip.Load().Success);
+        Equal(3, roundTrip.Profiles.Count);
+        True(!roundTrip.Save().Success);
+        Equal(invalid, File.ReadAllText(path));
+
+        const string invalidNull = "[{\"Process\":\"game.exe\",\"Width\":1920,\"Height\":1080,\"Frequency\":60,\"Policy\":null}]";
+        File.WriteAllText(path, invalidNull);
+        True(!roundTrip.Load().Success);
+        True(!roundTrip.Save().Success);
+        Equal(invalidNull, File.ReadAllText(path));
+
+        const string invalidEmpty = "[{\"Process\":\"game.exe\",\"Width\":1920,\"Height\":1080,\"Frequency\":60,\"Policy\":\"\"}]";
+        File.WriteAllText(path, invalidEmpty);
+        True(!roundTrip.Load().Success);
+        Equal(3, roundTrip.Profiles.Count);
+        True(!roundTrip.Save().Success);
+        Equal(invalidEmpty, File.ReadAllText(path));
+
+        const string invalidNumericName = "[{\"Process\":\"game.exe\",\"Width\":1920,\"Height\":1080,\"Frequency\":60,\"Policy\":\"1\"}]";
+        File.WriteAllText(path, invalidNumericName);
+        True(!roundTrip.Load().Success);
+        Equal(3, roundTrip.Profiles.Count);
+        True(!roundTrip.Save().Success);
+        Equal(invalidNumericName, File.ReadAllText(path));
+    });
+
+    WithTemporaryDirectory(directory =>
+    {
+        var path = Path.Combine(directory, "profiles.json");
+        var store = new ProfileStore(path);
+        store.Profiles["game.exe"] = Profile(Mode(1920, 1080, 60), (ProfileRetentionPolicy)999);
+        True(!store.Save().Success);
+        True(!File.Exists(path));
+    });
+}
+
+static void OncePolicyDoesNotReapply()
+{
+    var fixture = new MonitorFixture(ProfileRetentionPolicy.Once);
+    fixture.Monitor.Poll(fixture.Now);
+    Equal(1, fixture.Display.SetCalls.Count);
+
+    fixture.Display.Current = fixture.Original;
+    fixture.Monitor.Poll(fixture.Now.AddSeconds(5));
+    fixture.Monitor.Poll(fixture.Now.AddSeconds(10));
+
+    Equal(1, fixture.Display.SetCalls.Count);
+    Equal(ProfileRetentionPolicy.Once, fixture.Monitor.Status.Policy);
+    Equal(0, fixture.Monitor.Status.ReapplyCount);
+    Equal(1, fixture.Monitor.DiagnosticEvents.Count(item => item.Message.Contains("Modusabweichung nicht nachgesetzt", StringComparison.Ordinal)));
+}
+
+static void StartupPolicyIsBoundedAndQuiet()
+{
+    var byCount = new MonitorFixture(ProfileRetentionPolicy.Startup);
+    byCount.Monitor.Poll(byCount.Now);
+    for (var attempt = 1; attempt <= 3; attempt++)
+    {
+        byCount.Display.Current = byCount.Original;
+        byCount.Monitor.Poll(byCount.Now.AddSeconds(attempt * 5));
+    }
+    Equal(4, byCount.Display.SetCalls.Count);
+    Equal(3, byCount.Monitor.Status.ReapplyCount);
+
+    byCount.Display.Current = byCount.Original;
+    byCount.Monitor.Poll(byCount.Now.AddSeconds(20));
+    byCount.Monitor.Poll(byCount.Now.AddSeconds(25));
+    byCount.Monitor.Poll(byCount.Now.AddSeconds(30));
+    Equal(4, byCount.Display.SetCalls.Count);
+    Equal(1, byCount.Monitor.DiagnosticEvents.Count(item => item.Message.Contains("Modusabweichung nicht nachgesetzt", StringComparison.Ordinal)));
+
+    var byTime = new MonitorFixture(ProfileRetentionPolicy.Startup);
+    byTime.Monitor.Poll(byTime.Now);
+    byTime.Display.Current = byTime.Original;
+    byTime.Monitor.Poll(byTime.Now.AddSeconds(30));
+    Equal(1, byTime.Display.SetCalls.Count);
+    True(byTime.Monitor.Status.LastResult?.Contains("30-Sekunden", StringComparison.Ordinal) == true);
+
+    var justBeforeBoundary = new MonitorFixture(ProfileRetentionPolicy.Startup);
+    justBeforeBoundary.Monitor.Poll(justBeforeBoundary.Now);
+    justBeforeBoundary.Display.Current = justBeforeBoundary.Original;
+    justBeforeBoundary.Monitor.Poll(justBeforeBoundary.Now.AddSeconds(30).AddTicks(-1));
+    Equal(2, justBeforeBoundary.Display.SetCalls.Count);
+
+    var failedReapplies = new MonitorFixture(ProfileRetentionPolicy.Startup);
+    failedReapplies.Monitor.Poll(failedReapplies.Now);
+    failedReapplies.Display.Current = failedReapplies.Original;
+    failedReapplies.Display.Results.Enqueue(OperationResult.Fail("Fehler 1"));
+    failedReapplies.Display.Results.Enqueue(OperationResult.Fail("Fehler 2"));
+    failedReapplies.Display.Results.Enqueue(OperationResult.Fail("Fehler 3"));
+    failedReapplies.Monitor.Poll(failedReapplies.Now.AddSeconds(5));
+    failedReapplies.Monitor.Poll(failedReapplies.Now.AddSeconds(10));
+    failedReapplies.Monitor.Poll(failedReapplies.Now.AddSeconds(15));
+    failedReapplies.Monitor.Poll(failedReapplies.Now.AddSeconds(20));
+    Equal(4, failedReapplies.Display.SetCalls.Count);
+    Equal(3, failedReapplies.Monitor.Status.ReapplyCount);
+    Equal(1, failedReapplies.Monitor.DiagnosticEvents.Count(item => item.Message.Contains("Modusabweichung nicht nachgesetzt", StringComparison.Ordinal)));
+}
+
+static void ContinuousPolicyKeepsReapplying()
+{
+    var fixture = new MonitorFixture(ProfileRetentionPolicy.Continuous);
+    fixture.Monitor.Poll(fixture.Now);
+    for (var attempt = 1; attempt <= 6; attempt++)
+    {
+        fixture.Display.Current = fixture.Original;
+        fixture.Monitor.Poll(fixture.Now.AddSeconds(attempt * 5));
+    }
+    Equal(7, fixture.Display.SetCalls.Count);
+    Equal(6, fixture.Monitor.Status.ReapplyCount);
+    Equal(ProfileRetentionPolicy.Continuous, fixture.Monitor.Status.Policy);
+}
+
+static void InitialFailuresRetryForEveryPolicy()
+{
+    foreach (var policy in Enum.GetValues<ProfileRetentionPolicy>())
+    {
+        var fixture = new MonitorFixture(policy);
+        fixture.Display.Results.Enqueue(OperationResult.Fail("erster Fehler"));
+        fixture.Display.Results.Enqueue(OperationResult.Fail("zweiter Fehler"));
+        fixture.Display.Results.Enqueue(OperationResult.Ok());
+
+        fixture.Monitor.Poll(fixture.Now);
+        fixture.Monitor.Poll(fixture.Now.AddSeconds(5));
+        fixture.Monitor.Poll(fixture.Now.AddSeconds(10));
+
+        Equal(3, fixture.Display.SetCalls.Count);
+        Equal(ProfileMonitorState.Active, fixture.Monitor.Status.State);
+        Equal(0, fixture.Monitor.Status.ReapplyCount);
+    }
+}
+
+static void DisplayModeEquivalenceUsesOneHertzTolerance()
+{
+    True(DisplayModeEquivalence.AreEquivalent(Mode(3840, 1080, 100), Mode(3840, 1080, 99)));
+    True(DisplayModeEquivalence.AreEquivalent(Mode(3840, 1080, 99), Mode(3840, 1080, 100)));
+    True(!DisplayModeEquivalence.AreEquivalent(Mode(3840, 1080, 100), Mode(3840, 1080, 98)));
+    True(!DisplayModeEquivalence.AreEquivalent(Mode(3840, 1080, 100), Mode(2560, 1080, 100)));
+    True(!DisplayModeEquivalence.AreEquivalent(null, Mode(3840, 1080, 100)));
+    True(DisplayModeEquivalence.AreEquivalent(Mode(1, 1, uint.MaxValue), Mode(1, 1, uint.MaxValue - 1)));
+    True(!DisplayModeEquivalence.AreEquivalent(Mode(1, 1, uint.MaxValue), Mode(1, 1, 0)));
+    True(!Mode(3840, 1080, 100).Equals(Mode(3840, 1080, 99)));
+}
+
+static void RestoreUsesFrequencyTolerance()
+{
+    var fixture = new MonitorFixture();
+    fixture.Monitor.Poll(fixture.Now);
+    fixture.Display.Current = Mode(fixture.Original.Width, fixture.Original.Height, fixture.Original.Frequency - 1);
+
+    True(fixture.Monitor.Stop().Success);
+    Equal(1, fixture.Display.SetCalls.Count);
+}
+
+static void DeviationDiagnosticsAreComplete()
+{
+    var fixture = new MonitorFixture(ProfileRetentionPolicy.Continuous);
+    fixture.Monitor.Poll(fixture.Now);
+    fixture.Display.Current = Mode(1024, 768, 75);
+    fixture.Monitor.Poll(fixture.Now.AddSeconds(5));
+
+    var entry = fixture.Monitor.DiagnosticEvents.Single(item => item.Message.Contains("Nachsetzung 1/unbegrenzt", StringComparison.Ordinal));
+    True(entry.Message.Contains("beobachtet 1024x768 @ 75Hz", StringComparison.Ordinal));
+    True(entry.Message.Contains("Ziel 1280x720 @ 60Hz", StringComparison.Ordinal));
+    True(entry.Message.Contains("Richtlinie Dauerhaft erzwingen", StringComparison.Ordinal));
+    Equal(1, fixture.Monitor.Status.ReapplyCount);
+}
+
+static void SteamPendingAndActivePolicyAreSeparated()
+{
+    var once = new SteamLaunchFixture(policy: ProfileRetentionPolicy.Once);
+    True(once.Monitor.LaunchProfileApplication(once.Path, once.Now).Success);
+    once.Display.Current = once.Original;
+    once.Monitor.Poll(once.Now);
+    Equal(2, once.Display.SetCalls.Count);
+
+    var startup = new SteamLaunchFixture(policy: ProfileRetentionPolicy.Startup);
+    True(startup.Monitor.LaunchProfileApplication(startup.Path, startup.Now).Success);
+    startup.Display.Current = startup.Original;
+    startup.Monitor.Poll(startup.Now);
+    var process = new ProcessIdentity(77, startup.Now.AddSeconds(1), startup.Path);
+    startup.Processes.Items = [process];
+    startup.Monitor.Poll(startup.Now.AddSeconds(5));
+    startup.Display.Current = startup.Original;
+    startup.Monitor.Poll(startup.Now.AddSeconds(10));
+    Equal(1, startup.Monitor.Status.ReapplyCount);
+
+    startup.Display.Current = startup.Original;
+    startup.Monitor.Poll(startup.Now.AddSeconds(35));
+    Equal(3, startup.Display.SetCalls.Count);
+    True(startup.Monitor.Status.LastResult?.Contains("30-Sekunden", StringComparison.Ordinal) == true);
+}
+
+static void DirectLaunchStartsPolicyWindowImmediately()
+{
+    var fixture = new LaunchFixture(policy: ProfileRetentionPolicy.Startup);
+    True(fixture.Monitor.LaunchProfileApplication(fixture.Path, fixture.Now).Success);
+    fixture.Processes.Items = [fixture.Launcher.Identity];
+    fixture.Display.Current = fixture.Original;
+    fixture.Monitor.Poll(fixture.Now.AddSeconds(30));
+    Equal(1, fixture.Display.SetCalls.Count);
+    True(fixture.Monitor.Status.LastResult?.Contains("30-Sekunden", StringComparison.Ordinal) == true);
+}
+
 static void InstallationFolderIsFallback()
 {
     Equal("My Game", ProcessPresentation.GetFriendlyName("game.exe", "BootstrapPackagedGame", ".NET", null, null, "My Game"));
@@ -751,15 +1019,17 @@ static void ProfileEditingRollsBackOnSaveFailure()
         var originalKey = @"C:\Games\old.exe";
         var newKey = @"D:\Games\new.exe";
         var originalMode = Mode(1920, 1080, 60);
-        store.Profiles[originalKey] = originalMode;
+        var previousTarget = Profile(Mode(1024, 768, 75), ProfileRetentionPolicy.Startup);
+        store.Profiles[originalKey] = Profile(originalMode, ProfileRetentionPolicy.Once);
+        store.Profiles[newKey] = previousTarget;
 
-        var result = ProfileEditWorkflow.Save(store, originalKey, newKey, Mode(2560, 1440, 144));
+        var result = ProfileEditWorkflow.Save(store, originalKey, newKey, Mode(2560, 1440, 144), ProfileRetentionPolicy.Continuous);
 
         True(!result.Success);
-        Equal(1, store.Profiles.Count);
+        Equal(2, store.Profiles.Count);
         True(store.Profiles.TryGetValue(originalKey, out var restored));
-        Equal(originalMode, restored);
-        True(!store.Profiles.ContainsKey(newKey));
+        Equal(Profile(originalMode, ProfileRetentionPolicy.Once), restored);
+        Equal(previousTarget, store.Profiles[newKey]);
     });
 }
 
@@ -770,17 +1040,36 @@ static void ProfileEditingUpdatesAndMovesProfile()
         var store = new ProfileStore(Path.Combine(directory, "profiles.json"));
         var originalKey = @"C:\Games\old.exe";
         var newKey = @"D:\Games\new.exe";
-        store.Profiles[originalKey] = Mode(1920, 1080, 60);
+        store.Profiles[originalKey] = Profile(Mode(1920, 1080, 60), ProfileRetentionPolicy.Once);
 
-        True(ProfileEditWorkflow.Save(store, originalKey, newKey, Mode(2560, 1440, 144)).Success);
+        True(ProfileEditWorkflow.Save(store, originalKey, newKey, Mode(2560, 1440, 144), ProfileRetentionPolicy.Continuous).Success);
         Equal(1, store.Profiles.Count);
         True(!store.Profiles.ContainsKey(originalKey));
         True(store.Profiles.TryGetValue(newKey, out var saved));
-        Equal(Mode(2560, 1440, 144), saved);
+        Equal(Profile(Mode(2560, 1440, 144), ProfileRetentionPolicy.Continuous), saved);
 
-        True(ProfileEditWorkflow.Save(store, newKey, newKey, Mode(1920, 1080, 120)).Success);
+        True(ProfileEditWorkflow.Save(store, newKey, newKey, Mode(1920, 1080, 120), ProfileRetentionPolicy.Startup).Success);
         Equal(1, store.Profiles.Count);
-        Equal(Mode(1920, 1080, 120), store.Profiles[newKey]);
+        Equal(Profile(Mode(1920, 1080, 120), ProfileRetentionPolicy.Startup), store.Profiles[newKey]);
+    });
+}
+
+static void ProfileRemovalRollsBackOnSaveFailure()
+{
+    WithTemporaryDirectory(directory =>
+    {
+        var blockedDirectory = Path.Combine(directory, "blockiert");
+        File.WriteAllText(blockedDirectory, "kein Verzeichnis");
+        var store = new ProfileStore(Path.Combine(blockedDirectory, "profiles.json"));
+        var key = @"C:\Games\game.exe";
+        var profile = Profile(Mode(2560, 1440, 144), ProfileRetentionPolicy.Continuous);
+        store.Profiles[key] = profile;
+
+        var result = ProfileEditWorkflow.Remove(store, key);
+
+        True(!result.Success);
+        Equal(1, store.Profiles.Count);
+        True(ReferenceEquals(profile, store.Profiles[key]));
     });
 }
 
@@ -797,6 +1086,8 @@ static DisplayMode Mode(uint width, uint height, uint frequency) => new()
     Frequency = frequency,
     Label = $"{width}x{height} @ {frequency}Hz"
 };
+
+static DisplayProfile Profile(DisplayMode mode, ProfileRetentionPolicy policy = ProfileRetentionPolicy.Startup) => new(mode, policy);
 
 static void WithTemporaryDirectory(Action<string> action)
 {
@@ -826,12 +1117,12 @@ sealed class MonitorFixture
     public FakeProcesses Processes { get; }
     public ProfileMonitor Monitor { get; }
 
-    public MonitorFixture()
+    public MonitorFixture(ProfileRetentionPolicy policy = ProfileRetentionPolicy.Startup)
     {
         var path = ProcessMatcher.CanonicalizePath(@"C:\Games\game.exe");
         Display = new FakeDisplay { Current = Original };
         Processes = new FakeProcesses { Items = [new(10, DateTime.UnixEpoch, path)] };
-        var profiles = new ConcurrentDictionary<string, DisplayMode>(StringComparer.OrdinalIgnoreCase) { [path] = Target };
+        var profiles = new ConcurrentDictionary<string, DisplayProfile>(StringComparer.OrdinalIgnoreCase) { [path] = new DisplayProfile(Target, policy) };
         Monitor = new ProfileMonitor(profiles, Display, Processes, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
     }
 
@@ -850,17 +1141,17 @@ sealed class LaunchFixture
     public string Path { get; } = ProcessMatcher.CanonicalizePath(@"C:\Games\game.exe");
     public DisplayMode Original { get; } = CreateMode(1920, 1080, 60);
     public DisplayMode Target { get; } = CreateMode(1280, 720, 60);
-    public ConcurrentDictionary<string, DisplayMode> Profiles { get; }
+    public ConcurrentDictionary<string, DisplayProfile> Profiles { get; }
     public FakeDisplay Display { get; }
     public FakeProcesses Processes { get; } = new();
     public FakeLauncher Launcher { get; }
     public ProfileMonitor Monitor { get; }
 
-    public LaunchFixture(Func<string, bool>? fileExists = null)
+    public LaunchFixture(Func<string, bool>? fileExists = null, ProfileRetentionPolicy policy = ProfileRetentionPolicy.Startup)
     {
         Display = new FakeDisplay { Current = Original };
         Launcher = new FakeLauncher(new ProcessIdentity(42, DateTime.UnixEpoch.AddHours(1), Path));
-        Profiles = new ConcurrentDictionary<string, DisplayMode>(StringComparer.OrdinalIgnoreCase) { [Path] = Target };
+        Profiles = new ConcurrentDictionary<string, DisplayProfile>(StringComparer.OrdinalIgnoreCase) { [Path] = new DisplayProfile(Target, policy) };
         Monitor = new ProfileMonitor(
             Profiles,
             Display,
@@ -891,11 +1182,11 @@ sealed class SteamLaunchFixture
     public FakeLauncher Launcher { get; }
     public ProfileMonitor Monitor { get; }
 
-    public SteamLaunchFixture(TimeSpan? pendingTimeout = null)
+    public SteamLaunchFixture(TimeSpan? pendingTimeout = null, ProfileRetentionPolicy policy = ProfileRetentionPolicy.Startup)
     {
         Display = new FakeDisplay { Current = Original };
         Launcher = new FakeLauncher(new ProcessIdentity(900, Now, @"C:\Program Files (x86)\Steam\steam.exe"));
-        var profiles = new ConcurrentDictionary<string, DisplayMode>(StringComparer.OrdinalIgnoreCase) { [Path] = Target };
+        var profiles = new ConcurrentDictionary<string, DisplayProfile>(StringComparer.OrdinalIgnoreCase) { [Path] = new DisplayProfile(Target, policy) };
         Monitor = new ProfileMonitor(
             profiles,
             Display,

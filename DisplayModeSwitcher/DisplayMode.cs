@@ -25,4 +25,17 @@ namespace DisplayModeSwitcher
             return HashCode.Combine(Width, Height, Frequency);
         }
     }
+
+    public static class DisplayModeEquivalence
+    {
+        public static bool AreEquivalent(DisplayMode? first, DisplayMode? second, uint frequencyTolerance = 1)
+        {
+            if (first is null || second is null)
+                return false;
+
+            return first.Width == second.Width &&
+                   first.Height == second.Height &&
+                   Math.Abs((long)first.Frequency - second.Frequency) <= frequencyTolerance;
+        }
+    }
 }

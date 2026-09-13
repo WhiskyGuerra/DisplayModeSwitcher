@@ -155,7 +155,9 @@ public sealed record ProfileMonitorStatus(
     DateTime? LastChangedUtc = null,
     string? LastResult = null,
     int RetryCount = 0,
-    LaunchStrategy? LaunchStrategy = null)
+    LaunchStrategy? LaunchStrategy = null,
+    ProfileRetentionPolicy? Policy = null,
+    int ReapplyCount = 0)
 {
     public static ProfileMonitorStatus Idle { get; } = new(ProfileMonitorState.Idle, "Wartet auf einen Profilprozess.");
 }
@@ -163,7 +165,9 @@ public sealed record ProfileMonitorStatus(
 public sealed class ProfileMonitor
 {
     private static readonly TimeSpan MaximumPendingLaunchTimeout = TimeSpan.FromSeconds(120);
-    private readonly ConcurrentDictionary<string, DisplayMode> _profiles;
+    private static readonly TimeSpan StartupStabilizationWindow = TimeSpan.FromSeconds(30);
+    private const int MaximumStartupReapplyCount = 3;
+    private readonly ConcurrentDictionary<string, DisplayProfile> _profiles;
     private readonly IDisplayService _display;
     private readonly IProcessProvider _processes;
     private readonly IApplicationLauncher _launcher;
@@ -189,15 +193,20 @@ public sealed class ProfileMonitor
         public required LaunchPlan LaunchPlan { get; init; }
         public required DisplayMode Target { get; init; }
         public required DisplayMode Original { get; init; }
+        public required ProfileRetentionPolicy Policy { get; init; }
         public DateTime? LaunchRequestedUtc { get; init; }
         public DateTime? PendingUntilUtc { get; init; }
+        public DateTime? ActivatedUtc { get; set; }
+        public int ReapplyCount { get; set; }
+        public int PendingReapplyCount { get; set; }
         public int PendingDisplayFailureCount { get; set; }
         public bool ToolChangedMode { get; set; }
         public bool ProcessExited { get; set; }
+        public bool PolicySuppressionLogged { get; set; }
     }
 
     public ProfileMonitor(
-        ConcurrentDictionary<string, DisplayMode> profiles,
+        ConcurrentDictionary<string, DisplayProfile> profiles,
         IDisplayService display,
         IProcessProvider processes,
         TimeSpan? retryInterval = null,
@@ -248,8 +257,9 @@ public sealed class ProfileMonitor
         {
             if (_stopped)
                 return ProfileLaunchResult.Failed("Die Profilüberwachung wurde bereits beendet.");
-            if (!_profiles.TryGetValue(canonicalPath, out var target))
+            if (!_profiles.TryGetValue(canonicalPath, out var profile))
                 return ProfileLaunchResult.Failed("Das ausgewählte Profil ist nicht mehr vorhanden.");
+            var target = profile.Mode;
             if (!_fileExists(canonicalPath))
                 return ProfileLaunchResult.Failed("Die EXE-Datei des ausgewählten Profils wurde nicht gefunden.");
             if (_active is not null)
@@ -283,19 +293,19 @@ public sealed class ProfileMonitor
             catch (Exception ex)
             {
                 AddEvent(utcNow, $"Vorabmodus konnte nicht gelesen werden: {ex.Message}");
-                return FailLaunchState(canonicalPath, target, "Der aktuelle Anzeigemodus konnte nicht gelesen werden.", ex.Message, utcNow);
+                return FailLaunchState(canonicalPath, target, profile.Policy, "Der aktuelle Anzeigemodus konnte nicht gelesen werden.", ex.Message, utcNow);
             }
             if (original is null)
             {
                 AddEvent(utcNow, "Vorabmodus konnte nicht gelesen werden.");
-                return FailLaunchState(canonicalPath, target, "Der aktuelle Anzeigemodus konnte nicht gelesen werden.", "Aktueller Anzeigemodus nicht lesbar", utcNow);
+                return FailLaunchState(canonicalPath, target, profile.Policy, "Der aktuelle Anzeigemodus konnte nicht gelesen werden.", "Aktueller Anzeigemodus nicht lesbar", utcNow);
             }
 
-            SetStatus(ProfileMonitorState.Launching, $"Profilmodus für '{canonicalPath}' wird vorbereitet.", canonicalPath, target, null, utcNow, launchPlan.Strategy);
+            SetStatus(ProfileMonitorState.Launching, $"Profilmodus für '{canonicalPath}' wird vorbereitet.", canonicalPath, target, null, utcNow, launchPlan.Strategy, profile.Policy);
             _retryCount = 0;
             AddEvent(utcNow, $"Vorabmodus vor Anwendungsstart: {DiagnosticReportFormatter.FormatMode(original)}.");
 
-            var changedMode = !original.Equals(target);
+            var changedMode = !DisplayModeEquivalence.AreEquivalent(original, target);
             if (changedMode)
             {
                 OperationResult setResult;
@@ -304,20 +314,20 @@ public sealed class ProfileMonitor
                 if (!setResult.Success)
                 {
                     var error = setResult.Error ?? "Unbekannter Fehler beim Setzen des Profilmodus.";
-                    AddEvent(utcNow, $"Profilmodus vor Anwendungsstart fehlgeschlagen: {error}");
-                    return FailLaunchState(canonicalPath, target, $"Der Profilmodus konnte nicht gesetzt werden: {error}", error, utcNow);
+                    AddEvent(utcNow, $"Modusabweichung vor Anwendungsstart: beobachtet {DiagnosticReportFormatter.FormatMode(original)}, Ziel {DiagnosticReportFormatter.FormatMode(target)}, Richtlinie {ProfileRetentionPolicyText.ToDisplayName(profile.Policy)}, initiale Aktivierung – fehlgeschlagen: {error}");
+                    return FailLaunchState(canonicalPath, target, profile.Policy, $"Der Profilmodus konnte nicht gesetzt werden: {error}", error, utcNow);
                 }
 
                 DisplayMode? confirmed;
                 try { confirmed = _display.GetCurrentDisplayMode(); }
                 catch (Exception ex)
                 {
-                    return FailAfterUnconfirmedSet(canonicalPath, target, original, $"Bestätigung des Profilmodus fehlgeschlagen: {ex.Message}", utcNow);
+                    return FailAfterUnconfirmedSet(canonicalPath, target, original, profile.Policy, $"Bestätigung des Profilmodus fehlgeschlagen: {ex.Message}", utcNow);
                 }
-                if (confirmed is null || !confirmed.Equals(target))
-                    return FailAfterUnconfirmedSet(canonicalPath, target, original, "Der gesetzte Profilmodus konnte nicht bestätigt werden.", utcNow);
+                if (!DisplayModeEquivalence.AreEquivalent(confirmed, target))
+                    return FailAfterUnconfirmedSet(canonicalPath, target, original, profile.Policy, "Der gesetzte Profilmodus konnte nicht bestätigt werden.", utcNow);
 
-                AddEvent(utcNow, $"Profilmodus vor Anwendungsstart gesetzt: {DiagnosticReportFormatter.FormatMode(target)}.");
+                AddEvent(utcNow, $"Modusabweichung vor Anwendungsstart: beobachtet {DiagnosticReportFormatter.FormatMode(original)}, Ziel {DiagnosticReportFormatter.FormatMode(target)}, Richtlinie {ProfileRetentionPolicyText.ToDisplayName(profile.Policy)}, initiale Aktivierung – erfolgreich.");
             }
             else
             {
@@ -325,8 +335,8 @@ public sealed class ProfileMonitor
             }
 
             return launchPlan.Strategy == LaunchStrategy.Steam
-                ? StartSteamLaunch(launchPlan, target, original, changedMode, utcNow)
-                : StartDirectLaunch(launchPlan, target, original, changedMode, utcNow);
+                ? StartSteamLaunch(launchPlan, target, original, profile.Policy, changedMode, utcNow)
+                : StartDirectLaunch(launchPlan, target, original, profile.Policy, changedMode, utcNow);
         }
         finally
         {
@@ -338,6 +348,7 @@ public sealed class ProfileMonitor
         LaunchPlan launchPlan,
         DisplayMode target,
         DisplayMode original,
+        ProfileRetentionPolicy policy,
         bool changedMode,
         DateTime utcNow)
     {
@@ -358,6 +369,8 @@ public sealed class ProfileMonitor
                 LaunchPlan = launchPlan,
                 Target = target,
                 Original = original,
+                Policy = policy,
+                ActivatedUtc = utcNow,
                 ToolChangedMode = changedMode
             };
             _retryCount = 0;
@@ -369,7 +382,7 @@ public sealed class ProfileMonitor
         }
         catch (Exception ex)
         {
-            return FailApplicationStart(launchPlan, target, original, changedMode, ex, utcNow);
+            return FailApplicationStart(launchPlan, target, original, policy, changedMode, ex, utcNow);
         }
         finally
         {
@@ -382,6 +395,7 @@ public sealed class ProfileMonitor
         LaunchPlan launchPlan,
         DisplayMode target,
         DisplayMode original,
+        ProfileRetentionPolicy policy,
         bool changedMode,
         DateTime utcNow)
     {
@@ -397,6 +411,7 @@ public sealed class ProfileMonitor
                 LaunchPlan = launchPlan,
                 Target = target,
                 Original = original,
+                Policy = policy,
                 LaunchRequestedUtc = utcNow,
                 PendingUntilUtc = utcNow + _pendingLaunchTimeout,
                 ToolChangedMode = changedMode
@@ -412,7 +427,7 @@ public sealed class ProfileMonitor
         }
         catch (Exception ex)
         {
-            return FailApplicationStart(launchPlan, target, original, changedMode, ex, utcNow);
+            return FailApplicationStart(launchPlan, target, original, policy, changedMode, ex, utcNow);
         }
     }
 
@@ -432,6 +447,7 @@ public sealed class ProfileMonitor
         LaunchPlan launchPlan,
         DisplayMode target,
         DisplayMode original,
+        ProfileRetentionPolicy policy,
         bool changedMode,
         Exception exception,
         DateTime utcNow)
@@ -450,9 +466,9 @@ public sealed class ProfileMonitor
             ? $"Die Anwendung konnte nicht gestartet werden: {exception.Message}"
             : $"Die Anwendung konnte nicht gestartet werden: {exception.Message} Der Originalmodus konnte ebenfalls nicht wiederhergestellt werden: {rollbackError}";
         if (rollbackError is null)
-            SetStatus(ProfileMonitorState.Error, error, launchPlan.ExpectedExecutablePath, target, exception.Message, utcNow, launchPlan.Strategy);
+            SetStatus(ProfileMonitorState.Error, error, launchPlan.ExpectedExecutablePath, target, exception.Message, utcNow, launchPlan.Strategy, policy);
         else
-            QueuePendingRestore(launchPlan, target, original, rollbackError, utcNow);
+            QueuePendingRestore(launchPlan, target, original, policy, rollbackError, utcNow);
         return ProfileLaunchResult.Failed(error, startError: exception.Message, rollbackError: rollbackError, displayModeChanged: changedMode);
     }
 
@@ -535,6 +551,11 @@ public sealed class ProfileMonitor
         if (matches.Count == 1)
         {
             active.Process = matches[0];
+            // Die aktive 30-Sekunden-Startphase beginnt erst mit Übernahme des echten
+            // Spielprozesses. Nachsetzungen aus der Steam-Wartephase zählen nicht mit.
+            active.ActivatedUtc = utcNow;
+            active.ReapplyCount = 0;
+            active.PolicySuppressionLogged = false;
             active.PendingDisplayFailureCount = 0;
             _retryCount = 0;
             _nextActionUtc = utcNow + _verificationInterval;
@@ -559,7 +580,7 @@ public sealed class ProfileMonitor
             return;
         }
 
-        if (current is not null && current.Equals(active.Target))
+        if (DisplayModeEquivalence.AreEquivalent(current, active.Target))
         {
             active.PendingDisplayFailureCount = 0;
             _nextActionUtc = utcNow + _verificationInterval;
@@ -570,6 +591,7 @@ public sealed class ProfileMonitor
         }
 
         OperationResult result;
+        active.PendingReapplyCount++;
         try { result = _display.SetDisplayMode(active.Target); }
         catch (Exception ex) { result = OperationResult.Fail(ex.Message); }
         if (result.Success)
@@ -581,18 +603,21 @@ public sealed class ProfileMonitor
             SetStatus(ProfileMonitorState.PendingLaunch,
                 $"Steam-Start ausgelöst; Zielmodus wurde während des Wartens erneut angewendet.",
                 active.ProfileProcess, active.Target, "Zielmodus erneut angewendet", utcNow, active.LaunchPlan.Strategy);
-            AddEvent(utcNow, "Profilmodus während des Wartens auf Steam erneut angewendet.");
+            AddEvent(utcNow, FormatPendingDeviation(current, active, "erfolgreich"));
             return;
         }
 
-        HandlePendingDisplayFailure(result.Error ?? "Unbekannter Anzeigemodusfehler.", utcNow);
+        HandlePendingDisplayFailure(result.Error ?? "Unbekannter Anzeigemodusfehler.", utcNow, current, wasSetAttempted: true);
     }
 
-    private void HandlePendingDisplayFailure(string error, DateTime utcNow)
+    private void HandlePendingDisplayFailure(string error, DateTime utcNow, DisplayMode? observed = null, bool wasSetAttempted = false)
     {
         var active = _active ?? throw new InvalidOperationException("Ein ausstehender Profilstart wurde erwartet.");
         active.PendingDisplayFailureCount++;
         _retryCount++;
+        AddEvent(utcNow, wasSetAttempted
+            ? $"{FormatPendingDeviation(observed, active, "fehlgeschlagen")}: {error}"
+            : $"Steam-Wartephase: Zielmodus konnte nicht geprüft werden; Richtlinie {ProfileRetentionPolicyText.ToDisplayName(active.Policy)}: {error}");
         if (active.PendingDisplayFailureCount >= 3)
         {
             AbortPendingLaunch($"Steam-Start abgebrochen: Der Zielmodus konnte dauerhaft nicht gehalten werden ({error}).", utcNow);
@@ -603,7 +628,6 @@ public sealed class ProfileMonitor
         SetStatus(ProfileMonitorState.PendingLaunch,
             $"Wartet auf Steam-Zielprozess; Zielmodus konnte nicht gehalten werden: {error}",
             active.ProfileProcess, active.Target, error, utcNow, active.LaunchPlan.Strategy);
-        AddEvent(utcNow, $"Profilmodus während des Wartens auf Steam konnte nicht angewendet werden: {error}");
     }
 
     private void AbortPendingLaunch(string reason, DateTime utcNow)
@@ -660,7 +684,7 @@ public sealed class ProfileMonitor
 
     private void TryActivate(IReadOnlyList<ProcessIdentity> running, DateTime utcNow)
     {
-        var candidates = new List<(string Profile, DisplayMode Mode, ProcessIdentity Process)>();
+        var candidates = new List<(string Profile, DisplayProfile Definition, ProcessIdentity Process)>();
         foreach (var profile in _profiles.OrderBy(item => item.Key, StringComparer.OrdinalIgnoreCase))
         {
             var matches = ProcessMatcher.FindMatches(profile.Key, running);
@@ -669,7 +693,7 @@ public sealed class ProfileMonitor
                 var alreadyAmbiguous = _status.State == ProfileMonitorState.Ambiguous &&
                     string.Equals(_status.ProfileProcess, profile.Key, StringComparison.OrdinalIgnoreCase);
                 SetStatus(ProfileMonitorState.Ambiguous,
-                    $"Profil '{profile.Key}' passt zu mehreren laufenden Prozessen; es wird nicht automatisch geschaltet.", profile.Key, profile.Value, null, utcNow);
+                    $"Profil '{profile.Key}' passt zu mehreren laufenden Prozessen; es wird nicht automatisch geschaltet.", profile.Key, profile.Value.Mode, null, utcNow, policy: profile.Value.Policy);
                 if (!alreadyAmbiguous)
                     AddEvent(utcNow, $"Mehrdeutiges Legacy-Profil erkannt: {profile.Key}.");
                 return;
@@ -691,11 +715,21 @@ public sealed class ProfileMonitor
         }
 
         var candidate = candidates[0];
-        var original = _display.GetCurrentDisplayMode();
+        DisplayMode? original;
+        try { original = _display.GetCurrentDisplayMode(); }
+        catch (Exception ex)
+        {
+            _nextActionUtc = utcNow + _retryInterval;
+            _retryCount++;
+            SetStatus(ProfileMonitorState.Error, $"Der aktuelle Anzeigemodus konnte nicht gelesen werden: {ex.Message}",
+                candidate.Profile, candidate.Definition.Mode, ex.Message, utcNow, policy: candidate.Definition.Policy);
+            AddEvent(utcNow, $"Aktueller Anzeigemodus für Profil '{candidate.Profile}' konnte nicht gelesen werden: {ex.Message}");
+            return;
+        }
         if (original is null)
         {
             _nextActionUtc = utcNow + _retryInterval;
-            SetStatus(ProfileMonitorState.Error, "Der aktuelle Anzeigemodus konnte nicht gelesen werden.", candidate.Profile, candidate.Mode, "Aktueller Anzeigemodus nicht lesbar", utcNow);
+            SetStatus(ProfileMonitorState.Error, "Der aktuelle Anzeigemodus konnte nicht gelesen werden.", candidate.Profile, candidate.Definition.Mode, "Aktueller Anzeigemodus nicht lesbar", utcNow, policy: candidate.Definition.Policy);
             return;
         }
 
@@ -704,8 +738,9 @@ public sealed class ProfileMonitor
             ProfileProcess = candidate.Profile,
             Process = candidate.Process,
             LaunchPlan = LaunchPlan.Direct(candidate.Profile),
-            Target = candidate.Mode,
-            Original = original
+            Target = candidate.Definition.Mode,
+            Original = original,
+            Policy = candidate.Definition.Policy
         };
         AddEvent(utcNow, $"Profilprozess erkannt: {candidate.Profile}.");
         EnsureTargetMode(utcNow);
@@ -714,23 +749,55 @@ public sealed class ProfileMonitor
     private void EnsureTargetMode(DateTime utcNow)
     {
         var active = _active ?? throw new InvalidOperationException("Ein aktives Profil wurde erwartet.");
-        var current = _display.GetCurrentDisplayMode();
-        if (current is not null && current.Equals(active.Target))
+        DisplayMode? current;
+        try { current = _display.GetCurrentDisplayMode(); }
+        catch (Exception ex)
         {
+            _nextActionUtc = utcNow + _retryInterval;
+            _retryCount++;
+            SetStatus(ProfileMonitorState.RetryPending,
+                $"Profilmodus für '{active.ProfileProcess}' konnte nicht geprüft werden: {ex.Message} Neuer Versuch folgt.",
+                active.ProfileProcess, active.Target, ex.Message, utcNow, active.LaunchPlan.Strategy);
+            AddEvent(utcNow, $"Profilmodus konnte nicht geprüft werden; Ziel {DiagnosticReportFormatter.FormatMode(active.Target)}, Richtlinie {ProfileRetentionPolicyText.ToDisplayName(active.Policy)}: {ex.Message}");
+            return;
+        }
+        if (DisplayModeEquivalence.AreEquivalent(current, active.Target))
+        {
+            active.ActivatedUtc ??= utcNow;
             _nextActionUtc = utcNow + _verificationInterval;
             SetStatus(ProfileMonitorState.Active, $"Profilmodus für '{active.ProfileProcess}' ist aktiv.", active.ProfileProcess, active.Target, "Zielmodus aktiv", utcNow, active.LaunchPlan.Strategy);
             return;
         }
 
-        var result = _display.SetDisplayMode(active.Target);
+        var isReapply = active.ActivatedUtc is not null;
+        if (isReapply && !MayReapply(active, utcNow, out var suppressionReason))
+        {
+            _nextActionUtc = utcNow + _verificationInterval;
+            SetStatus(ProfileMonitorState.Active,
+                $"Profil '{active.ProfileProcess}' bleibt aktiv; der abweichende Modus wird gemäß Richtlinie nicht nachgesetzt.",
+                active.ProfileProcess, active.Target, suppressionReason, utcNow, active.LaunchPlan.Strategy);
+            if (!active.PolicySuppressionLogged)
+            {
+                active.PolicySuppressionLogged = true;
+                AddEvent(utcNow, $"Modusabweichung nicht nachgesetzt: beobachtet {DiagnosticReportFormatter.FormatMode(current)}, Ziel {DiagnosticReportFormatter.FormatMode(active.Target)}, Richtlinie {ProfileRetentionPolicyText.ToDisplayName(active.Policy)}, Nachsetzungen {FormatReapplyCount(active)}; {suppressionReason}");
+            }
+            return;
+        }
+
+        if (isReapply)
+            active.ReapplyCount++;
+
+        OperationResult result;
+        try { result = _display.SetDisplayMode(active.Target); }
+        catch (Exception ex) { result = OperationResult.Fail(ex.Message); }
         if (result.Success)
         {
-            var reapply = active.ToolChangedMode;
             active.ToolChangedMode = true;
+            active.ActivatedUtc ??= utcNow;
             _nextActionUtc = utcNow + _verificationInterval;
             _retryCount = 0;
             SetStatus(ProfileMonitorState.Active, $"Profilmodus für '{active.ProfileProcess}' wurde angewendet.", active.ProfileProcess, active.Target, "Anwenden erfolgreich", utcNow, active.LaunchPlan.Strategy);
-            AddEvent(utcNow, reapply ? $"Profilmodus erneut angewendet: {active.ProfileProcess}." : $"Profilmodus angewendet: {active.ProfileProcess}.");
+            AddEvent(utcNow, FormatDeviationDecision(current, active, isReapply, "erfolgreich"));
         }
         else
         {
@@ -738,9 +805,48 @@ public sealed class ProfileMonitor
             _retryCount++;
             SetStatus(ProfileMonitorState.RetryPending,
                 $"Profilmodus für '{active.ProfileProcess}' konnte nicht angewendet werden: {result.Error} Neuer Versuch folgt.", active.ProfileProcess, active.Target, result.Error, utcNow, active.LaunchPlan.Strategy);
-            AddEvent(utcNow, $"Profilmodus konnte nicht angewendet werden: {result.Error}");
+            AddEvent(utcNow, $"{FormatDeviationDecision(current, active, isReapply, "fehlgeschlagen")}: {result.Error}");
         }
     }
+
+    private static bool MayReapply(ActiveProfile active, DateTime utcNow, out string reason)
+    {
+        switch (active.Policy)
+        {
+            case ProfileRetentionPolicy.Once:
+                reason = "Einmalige Aktivierung abgeschlossen.";
+                return false;
+            case ProfileRetentionPolicy.Startup when utcNow >= active.ActivatedUtc!.Value + StartupStabilizationWindow:
+                reason = "Die 30-Sekunden-Startphase ist beendet.";
+                return false;
+            case ProfileRetentionPolicy.Startup when active.ReapplyCount >= MaximumStartupReapplyCount:
+                reason = "Das Limit von 3 Nachsetzungen ist erreicht.";
+                return false;
+            case ProfileRetentionPolicy.Startup:
+            case ProfileRetentionPolicy.Continuous:
+                reason = string.Empty;
+                return true;
+            default:
+                throw new InvalidOperationException("Das aktive Profil besitzt eine unbekannte Richtlinie.");
+        }
+    }
+
+    private static string FormatDeviationDecision(DisplayMode? observed, ActiveProfile active, bool isReapply, string result)
+    {
+        var action = isReapply ? $"Nachsetzung {FormatReapplyCount(active)}" : "initiale Aktivierung";
+        return $"Modusabweichung: beobachtet {DiagnosticReportFormatter.FormatMode(observed)}, Ziel {DiagnosticReportFormatter.FormatMode(active.Target)}, Richtlinie {ProfileRetentionPolicyText.ToDisplayName(active.Policy)}, {action} – {result}";
+    }
+
+    private static string FormatPendingDeviation(DisplayMode? observed, ActiveProfile active, string result) =>
+        $"Modusabweichung während Steam-Wartephase: beobachtet {DiagnosticReportFormatter.FormatMode(observed)}, Ziel {DiagnosticReportFormatter.FormatMode(active.Target)}, Richtlinie {ProfileRetentionPolicyText.ToDisplayName(active.Policy)} (aktive Richtlinie beginnt nach Prozessübernahme), Nachsetzung {active.PendingReapplyCount}/unbegrenzt (maximal 3 aufeinanderfolgende Displayfehler) – {result}";
+
+    private static string FormatReapplyCount(ActiveProfile active) => active.Policy switch
+    {
+        ProfileRetentionPolicy.Startup => $"{active.ReapplyCount}/{MaximumStartupReapplyCount}",
+        ProfileRetentionPolicy.Once => $"{active.ReapplyCount}/0",
+        ProfileRetentionPolicy.Continuous => $"{active.ReapplyCount}/unbegrenzt",
+        _ => active.ReapplyCount.ToString()
+    };
 
     private void TryRestore(DateTime utcNow)
     {
@@ -775,10 +881,11 @@ public sealed class ProfileMonitor
         string profileProcess,
         DisplayMode target,
         DisplayMode original,
+        ProfileRetentionPolicy policy,
         string displayError,
         DateTime utcNow)
     {
-        AddEvent(utcNow, $"Profilmodus vor Anwendungsstart fehlgeschlagen: {displayError}");
+        AddEvent(utcNow, $"Modusabweichung vor Anwendungsstart: beobachtet {DiagnosticReportFormatter.FormatMode(original)}, Ziel {DiagnosticReportFormatter.FormatMode(target)}, Richtlinie {ProfileRetentionPolicyText.ToDisplayName(policy)}, initiale Aktivierung – Bestätigung fehlgeschlagen: {displayError}");
         var rollbackError = TryRestoreMode(original);
         AddEvent(utcNow, rollbackError is null
             ? "Originalmodus nach fehlgeschlagener Modusbestätigung wiederhergestellt."
@@ -787,9 +894,9 @@ public sealed class ProfileMonitor
             ? displayError
             : $"{displayError} Der Originalmodus konnte ebenfalls nicht wiederhergestellt werden: {rollbackError}";
         if (rollbackError is null)
-            SetStatus(ProfileMonitorState.Error, error, profileProcess, target, displayError, utcNow);
+            SetStatus(ProfileMonitorState.Error, error, profileProcess, target, displayError, utcNow, policy: policy);
         else
-            QueuePendingRestore(LaunchPlan.Direct(profileProcess), target, original, rollbackError, utcNow);
+            QueuePendingRestore(LaunchPlan.Direct(profileProcess), target, original, policy, rollbackError, utcNow);
         return ProfileLaunchResult.Failed(error, displayError: displayError, rollbackError: rollbackError, displayModeChanged: true);
     }
 
@@ -797,6 +904,7 @@ public sealed class ProfileMonitor
         LaunchPlan launchPlan,
         DisplayMode target,
         DisplayMode original,
+        ProfileRetentionPolicy policy,
         string rollbackError,
         DateTime utcNow)
     {
@@ -806,6 +914,7 @@ public sealed class ProfileMonitor
             LaunchPlan = launchPlan,
             Target = target,
             Original = original,
+            Policy = policy,
             ToolChangedMode = true,
             ProcessExited = true
         };
@@ -819,11 +928,12 @@ public sealed class ProfileMonitor
     private ProfileLaunchResult FailLaunchState(
         string profileProcess,
         DisplayMode target,
+        ProfileRetentionPolicy policy,
         string error,
         string displayError,
         DateTime utcNow)
     {
-        SetStatus(ProfileMonitorState.Error, error, profileProcess, target, displayError, utcNow);
+        SetStatus(ProfileMonitorState.Error, error, profileProcess, target, displayError, utcNow, policy: policy);
         return ProfileLaunchResult.Failed(error, displayError: displayError);
     }
 
@@ -832,7 +942,7 @@ public sealed class ProfileMonitor
         try
         {
             var current = _display.GetCurrentDisplayMode();
-            if (current is not null && current.Equals(original))
+            if (DisplayModeEquivalence.AreEquivalent(current, original))
                 return null;
             var result = _display.SetDisplayMode(original);
             return result.Success ? null : result.Error ?? "Unbekannter Wiederherstellungsfehler.";
@@ -847,7 +957,7 @@ public sealed class ProfileMonitor
     {
         var active = _active ?? throw new InvalidOperationException("Ein aktives Profil wurde erwartet.");
         var current = _display.GetCurrentDisplayMode();
-        return current is not null && current.Equals(active.Original)
+        return DisplayModeEquivalence.AreEquivalent(current, active.Original)
             ? OperationResult.Ok()
             : _display.SetDisplayMode(active.Original);
     }
@@ -860,13 +970,14 @@ public sealed class ProfileMonitor
         AddEvent(utcNow, "Profilüberwachung gestoppt.");
     }
 
-    private void SetStatus(ProfileMonitorState state, string message, string? profileProcess, DisplayMode? targetMode, string? result, DateTime utcNow, LaunchStrategy? launchStrategy = null)
+    private void SetStatus(ProfileMonitorState state, string message, string? profileProcess, DisplayMode? targetMode, string? result, DateTime utcNow, LaunchStrategy? launchStrategy = null, ProfileRetentionPolicy? policy = null)
     {
-        var next = new ProfileMonitorStatus(state, message, profileProcess, targetMode, utcNow, result, _retryCount, launchStrategy);
+        var next = new ProfileMonitorStatus(state, message, profileProcess, targetMode, utcNow, result, _retryCount, launchStrategy,
+            policy ?? _active?.Policy, IsPendingLaunch(_active) ? _active!.PendingReapplyCount : _active?.ReapplyCount ?? 0);
         var current = Volatile.Read(ref _status);
         if (current.State == next.State && current.Message == next.Message && current.ProfileProcess == next.ProfileProcess &&
             Equals(current.TargetMode, next.TargetMode) && current.LastResult == next.LastResult && current.RetryCount == next.RetryCount &&
-            current.LaunchStrategy == next.LaunchStrategy)
+            current.LaunchStrategy == next.LaunchStrategy && current.Policy == next.Policy && current.ReapplyCount == next.ReapplyCount)
             return;
         Volatile.Write(ref _status, next);
     }
@@ -884,7 +995,7 @@ public sealed class ProfileManager : IDisposable
     private bool _disposed;
 
     public ProfileManager(
-        ConcurrentDictionary<string, DisplayMode> profiles,
+        ConcurrentDictionary<string, DisplayProfile> profiles,
         IDisplayService? display = null,
         IProcessProvider? processes = null,
         IApplicationLauncher? launcher = null,

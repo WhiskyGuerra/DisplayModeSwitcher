@@ -15,6 +15,21 @@ Nach dem Start läuft das Tool ohne Hauptfenster im Infobereich. Über das
 Tray-Menü können Auflösung und Bildwiederholrate manuell gewählt werden.
 
 Unter **Profile verwalten...** wird pro Programm ein Zielmodus gespeichert.
+Mit **Modus beibehalten** wird außerdem festgelegt, wie das Tool auf spätere
+Abweichungen reagiert:
+
+- **Während Startphase stabilisieren** ist der sichere Standard. Nach der
+  ersten erfolgreichen Aktivierung wird der Zielmodus höchstens 30 Sekunden
+  lang und höchstens dreimal nachgesetzt.
+- **Einmalig** setzt oder bestätigt den Modus beim Erkennen beziehungsweise
+  Start genau initial und greift danach bis zum Wiederherstellen nicht mehr
+  ein. Diese Einstellung empfiehlt sich für Spiele, die externe Moduswechsel
+  während der Laufzeit schlecht vertragen.
+- **Dauerhaft erzwingen** prüft und korrigiert den Modus während der gesamten
+  Prozesslaufzeit mit begrenzter Rate. Diese Einstellung sollte nur bewusst
+  verwendet werden, weil Spiel und Tool sonst wiederholt gegeneinander
+  umschalten können.
+
 Als Profil-Schlüssel kann der vollständige Pfad zur EXE verwendet werden. Die
 ältere Schreibweise nur mit dem EXE-Namen bleibt kompatibel; sie darf aber nur
 einen laufenden Prozess eindeutig treffen. Bei mehreren Treffern oder mehreren
@@ -35,6 +50,10 @@ wird **Steam** gewählt. Dabei öffnet das Tool ausschließlich
 `steam://run/<App-ID>` über den offiziellen Windows-Protokollhandler. Es wartet
 bis zu 120 Sekunden auf eine neue, eindeutig passende Instanz der exakten
 Profil-EXE und hält den Zielmodus währenddessen mit begrenzter Prüfrate aktiv.
+Diese sichere Wartephase ist von der gewählten Richtlinie unabhängig. Die
+30-sekündige aktive Startphase beginnt bei Steam erst, wenn der eindeutige
+Spielprozess übernommen wurde; bei einem Direktstart beginnt sie mit dem
+erfolgreichen Start.
 Der von Windows eventuell zurückgegebene Steam-Prozess wird nicht als Spiel
 überwacht.
 
@@ -47,9 +66,13 @@ weiterhin automatisch erkannt, aber nicht über diese Schaltfläche gestartet
 werden. Die Profilverwaltung zeigt für ein startbares ausgewähltes Profil
 `Startart nur beim Klick: Steam` oder `Startart nur beim Klick: Direkt` an.
 
-Die Überwachung prüft den Prozess regelmäßig. Ein fehlgeschlagener Wechsel wird
-mit Abstand erneut versucht, und eine spätere Abweichung vom Profilmodus wird
-erneut korrigiert. Der Status ist im Tray-Menü sichtbar.
+Die Überwachung prüft den Prozess regelmäßig. Ein fehlgeschlagener initialer
+Wechsel wird unabhängig von der Richtlinie mit Abstand erneut versucht. Eine
+spätere Abweichung wird gemäß der Profilrichtlinie behandelt. Beim Vergleich
+gelten 99 und 100 Hz (allgemein ±1 Hz) bei gleicher Breite und Höhe als
+gleichwertig, damit Rundungen von Windows oder Treiber keine unnötigen Wechsel
+auslösen. Der konkret konfigurierte Modus bleibt weiterhin das Ziel beim
+tatsächlichen Setzen. Der Status ist im Tray-Menü sichtbar.
 
 ### Autostart mit Windows
 
@@ -66,6 +89,11 @@ Speichern automatisch angelegt. Eine vorhandene Legacy-Datei `profiles.json`
 neben der EXE wird beim ersten Start in diesen Speicherort übernommen und dabei
 nicht gelöscht. Beschädigte oder ungültige Profildaten werden nicht
 überschrieben; die Datei kann nach Sicherung korrigiert oder entfernt werden.
+Profile aus früheren Versionen ohne Richtlinienfeld werden beim Laden als
+**Während Startphase stabilisieren** behandelt und beim nächsten Speichern in
+das neue, lesbare Format übernommen. Unbekannte Richtlinienwerte gelten als
+ungültige Profildaten und blockieren ein Überschreiben ebenso wie andere
+Dateifehler.
 
 ## Grenzen und Sicherheitsverhalten
 
