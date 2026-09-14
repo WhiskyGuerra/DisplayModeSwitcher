@@ -3,6 +3,10 @@ using DisplayModeSwitcher;
 
 var tests = new (string Name, Action Run)[]
 {
+    ("Updateprüfung findet das neueste stabile GitHub-Release", UpdateCheckerTests.FindsNewestStableRelease),
+    ("Updateprüfung ignoriert ungültige, alte und Vorab-Releases", UpdateCheckerTests.IgnoresInvalidAndOlderReleases),
+    ("Updateprüfung meldet API-Fehler ohne Absturz", UpdateCheckerTests.ReportsApiFailuresWithoutThrowing),
+    ("Updateprüfung unterscheidet ein noch fehlendes stabiles Release", UpdateCheckerTests.DistinguishesMissingStableRelease),
     ("Fehlgeschlagener Profilversuch wird rate-limited wiederholt", FailedAttemptRetries),
     ("Spätere Modusabweichung wird erneut korrigiert", LaterDeviationReapplies),
     ("Aktiver Zielmodus wird nicht unnötig erneut gesetzt", ActiveTargetIsNotReapplied),

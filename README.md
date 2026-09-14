@@ -126,6 +126,21 @@ aufbewahrt werden. Der Bericht enthält Prozess- und Monitorinformationen, aber
 keine Speicherinhalte eines Spiels und keine Interaktion mit Anti-Cheat-
 Systemen.
 
+### Updates
+
+**Auf Updates prüfen...** im Tray fragt ausschließlich nach einem bewussten
+Klick die öffentlichen Release-Metadaten des festen GitHub-Projekts ab. Dabei
+werden nur veröffentlichte stabile Releases berücksichtigt; Entwürfe,
+Vorab-Releases und ungültige Versions-Tags werden ignoriert. Die Anwendung
+meldet getrennt, ob kein stabiles Release existiert, die installierte Version
+aktuell ist, eine neuere Version vorliegt oder GitHub nicht erreichbar ist.
+
+Der aktuelle Zwischenstand lädt noch keine Datei herunter und verändert die
+Installation nicht. Bei einer gefundenen Version kann lediglich die geprüfte
+GitHub-Release-Seite nach ausdrücklicher Bestätigung geöffnet werden. Der
+signaturähnliche SHA-256-Prüf- und Installationspfad folgt als separates
+Arbeitspaket.
+
 ### Autostart mit Windows
 
 Der Menüpunkt **Autostart mit Windows** verwaltet den Autostart für den

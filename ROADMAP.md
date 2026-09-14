@@ -23,7 +23,7 @@ Die funktionale Basis ist abgeschlossen:
 - Autostart, Diagnosebericht, Profilspeicherung und V1-zu-V2-Migration sind
   vorhanden.
 
-Letzter automatischer Stand: Release-Build erfolgreich, **142/142 Tests**.
+Letzter automatischer Stand: Release-Build erfolgreich, **146/146 Tests**.
 
 Manuell bestätigt:
 
@@ -182,6 +182,12 @@ allgemeine Testbeschreibung und Anti-Cheat-Grenzen entsprechen dem aktuellen
 Mehrmonitor-Stand.
 
 ### 6. Updatefunktion über GitHub Releases
+
+In Arbeit. Das erste sichere Teilpaket – eine ausschließlich manuell
+ausgelöste Metadatenprüfung – ist implementiert und automatisch geprüft. Sie
+unterscheidet fehlende Releases, aktuellen Stand, verfügbare Version und
+API-Fehler. Entwürfe, Vorab-Releases und ungültige Tags werden ignoriert; es
+findet noch kein Download oder Dateiaustausch statt.
 
 Nicht als direktes `git pull`, sondern als kontrollierter Binär-Updatepfad:
 
