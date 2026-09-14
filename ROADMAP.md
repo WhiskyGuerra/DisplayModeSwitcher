@@ -115,12 +115,21 @@ Automatisches Ergebnis: Release-Build ohne Warnungen, **141/141 Tests**.
 
 ### 3. Eigenes Icon-Set
 
+Implementiert und technisch geprüft; die Sichtprüfung im echten Windows-Tray
+und an der veröffentlichten EXE ist noch offen.
+
 - Ein schlichtes, auch in 16×16 Pixeln erkennbares Symbol für Monitor und
   Moduswechsel entwerfen.
 - Varianten für Anwendung, EXE und Tray in einer mehrstufigen `.ico`-Datei
   bereitstellen.
 - Darstellung mit hellem und dunklem Windows-Theme prüfen.
 - Ressourcenpfad, Projektdatei und veröffentlichte EXE kontrollieren.
+
+Ergebnis: Ein Monitor mit zwei gegenläufigen cyanfarbenen und violetten
+Wechselpfeilen liegt als transparente Quelldatei und als ICO mit 16, 20, 24,
+32, 40, 48, 64, 128 und 256 Pixeln vor. Das Icon wird in die EXE eingebettet;
+Tray und beide Fenster verwenden diese eingebettete Ressource, sodass zur
+Laufzeit keine separate Icon-Datei erforderlich ist.
 
 ### 4. Mehrmonitor-Hardwareabnahme abschließen
 
@@ -157,7 +166,26 @@ in der Monitorzuordnung hat Vorrang vor kosmetischen Erweiterungen.
 - Sicherheitsgrenzen für Steam, VAC und andere Anti-Cheat-Systeme beibehalten
   und dokumentieren.
 
-### 6. Release-Vorbereitung
+### 6. Updatefunktion über GitHub Releases
+
+Nicht als direktes `git pull`, sondern als kontrollierter Binär-Updatepfad:
+
+- GitHub Releases auf eine neuere stabile beziehungsweise freigegebene Version
+  prüfen.
+- Verfügbare Version anzeigen und nur nach ausdrücklicher Bestätigung laden.
+- Fertiges frameworkabhängiges ZIP und veröffentlichte SHA-256-Prüfsumme
+  verwenden; kein Build aus Quellcode auf dem Zielrechner.
+- Download zunächst in ein Staging-Verzeichnis schreiben und vollständig
+  prüfen.
+- Einen kleinen separaten Updater verwenden, der das laufende Tool beendet,
+  Dateien austauscht und die neue Version startet.
+- Bei einem fehlgeschlagenen Austausch auf die vorige Version zurückrollen.
+- Profile unter `%LocalAppData%` und den stabilen Installations-/Autostart-Pfad
+  unverändert erhalten.
+- Keine unbeaufsichtigten Updates; Prüfung und Installation müssen getrennt
+  abschaltbar sein.
+
+### 7. Release-Vorbereitung
 
 - Versionierung für das erste Pre-Release festlegen.
 - Frameworkabhängiges `win-x64`-Bundle erzeugen; .NET 8 darf vorausgesetzt

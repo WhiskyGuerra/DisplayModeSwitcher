@@ -50,6 +50,7 @@ public class ProfileManagerForm : Form
         _processProvider = processProvider ?? new SystemProcessProvider();
         _targets = new ProfileTargetEditor(topologyService);
         Text = "Profile verwalten";
+        Icon = ApplicationIconProvider.Create();
         AutoScaleDimensions = new SizeF(96F, 96F);
         AutoScaleMode = AutoScaleMode.Dpi;
         MinimumSize = new Size(920, 720);

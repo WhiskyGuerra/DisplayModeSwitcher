@@ -31,7 +31,7 @@ public sealed class ManualDisplayForm : Form
     {
         _switcher = switcher ?? throw new ArgumentNullException(nameof(switcher));
         Text = "Anzeigemodus manuell";
-        Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
+        Icon = ApplicationIconProvider.Create();
         AutoScaleMode = AutoScaleMode.Dpi;
         StartPosition = FormStartPosition.CenterScreen;
         FormBorderStyle = FormBorderStyle.FixedDialog;

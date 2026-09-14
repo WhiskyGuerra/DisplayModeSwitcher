@@ -12,6 +12,7 @@ namespace DisplayModeSwitcher
         private readonly ProfileManager _profileManager;
         private readonly IDisplayTopologyService _topology;
         private readonly ManualDisplaySwitcher _manualDisplay;
+        private readonly Icon _applicationIcon;
         private readonly NotifyIcon trayIcon;
         private readonly ContextMenuStrip contextMenu;
         private readonly ToolStripMenuItem _statusItem;
@@ -24,6 +25,7 @@ namespace DisplayModeSwitcher
             _profileManager = profileManager;
             _topology = topology;
             _manualDisplay = new ManualDisplaySwitcher(topology, targetedDisplay, () => _profileManager.Status);
+            _applicationIcon = ApplicationIconProvider.Create();
             contextMenu = new ContextMenuStrip();
 
             var manualModeItem = new ToolStripMenuItem("Anzeigemodus manuell...");
@@ -74,7 +76,7 @@ namespace DisplayModeSwitcher
 
             trayIcon = new NotifyIcon
             {
-                Icon = new Icon(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Resources", "Icon.ico")),
+                Icon = _applicationIcon,
                 ContextMenuStrip = contextMenu,
                 Text = "Display Mode Switcher",
                 Visible = true
@@ -148,6 +150,7 @@ namespace DisplayModeSwitcher
         {
             _statusTimer.Dispose();
             trayIcon.Dispose();
+            _applicationIcon.Dispose();
             contextMenu.Dispose();
             base.OnFormClosed(e);
         }

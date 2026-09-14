@@ -14,17 +14,8 @@
 	<Description>Tool zur dynamischen Auflösungsumschaltung basierend auf aktiven Profilen.</Description>
 	<RepositoryUrl>https://github.com/WhiskyGuerra/DisplayModeSwitcher</RepositoryUrl>
 	<RepositoryType>git</RepositoryType>
+	<ApplicationIcon>Resources\Icon.ico</ApplicationIcon>
   </PropertyGroup>
-
-  <ItemGroup>
-    <None Remove="Resources\Icon.ico" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <Content Include="Resources\Icon.ico">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
-  </ItemGroup>
 
   <ItemGroup>
     <InternalsVisibleTo Include="DisplayModeSwitcher.Tests" />
