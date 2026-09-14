@@ -33,6 +33,9 @@ Manuell bestätigt:
   korrigiert und der Originalmodus nach dem Beenden wiederhergestellt.
 - Das manuelle Tray-Schalten wurde mit zwei Monitoren geprüft. Ausschließlich
   der jeweils gewählte Monitor änderte seinen Modus.
+- Die manuelle Updateprüfung hat das öffentliche stabile GitHub-Release
+  `v1.0.1` erkannt und gegenüber App-Version `1.0.0.0` korrekt als neuer
+  eingeordnet.
 
 Das Icon-Arbeitspaket ist im Commit `0ed8bb8` festgehalten und zum Remote
 gepusht.
@@ -184,10 +187,14 @@ Mehrmonitor-Stand.
 ### 6. Updatefunktion über GitHub Releases
 
 In Arbeit. Das erste sichere Teilpaket – eine ausschließlich manuell
-ausgelöste Metadatenprüfung – ist implementiert und automatisch geprüft. Sie
+ausgelöste Metadatenprüfung – ist implementiert, automatisch geprüft und
+manuell mit `v1.0.1` abgenommen. Sie
 unterscheidet fehlende Releases, aktuellen Stand, verfügbare Version und
 API-Fehler. Entwürfe, Vorab-Releases und ungültige Tags werden ignoriert; es
 findet noch kein Download oder Dateiaustausch statt.
+
+Die Release-Quelle ist jetzt öffentlich und ohne Token erreichbar. Persönliche
+GitHub-Tokens werden weder eingebettet noch lokal vom Tool angefordert.
 
 Nicht als direktes `git pull`, sondern als kontrollierter Binär-Updatepfad:
 

@@ -42,6 +42,10 @@ public static class UpdateCheckerTests
         using var http = new HttpClient(new FakeHandler(HttpStatusCode.Forbidden, "{}"));
         var result = new GitHubReleaseUpdateChecker(http).CheckAsync(new Version(1, 0)).GetAwaiter().GetResult();
         Expect(result.State == UpdateCheckState.Failed && result.Error!.Contains("Abfragelimit", StringComparison.Ordinal));
+
+        using var missingHttp = new HttpClient(new FakeHandler(HttpStatusCode.NotFound, "{}"));
+        var missing = new GitHubReleaseUpdateChecker(missingHttp).CheckAsync(new Version(1, 0)).GetAwaiter().GetResult();
+        Expect(missing.State == UpdateCheckState.Failed && missing.Error!.Contains("möglicherweise privat", StringComparison.Ordinal));
     }
 
     public static void DistinguishesMissingStableRelease()

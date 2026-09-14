@@ -119,7 +119,7 @@ public sealed class GitHubReleaseUpdateChecker : IUpdateChecker
 
     private static string DescribeHttpError(HttpStatusCode statusCode) => statusCode switch
     {
-        HttpStatusCode.NotFound => "Für das Projekt wurden noch keine abrufbaren GitHub-Releases gefunden.",
+        HttpStatusCode.NotFound => "GitHub stellt für das Projekt keine öffentlichen Release-Daten bereit. Das Repository oder Release ist möglicherweise privat, nicht vorhanden oder noch nicht veröffentlicht.",
         HttpStatusCode.Forbidden => "GitHub hat die Updateprüfung abgelehnt oder das anonyme Abfragelimit ist erreicht.",
         _ => $"Die GitHub-Updateprüfung ist mit HTTP-Status {(int)statusCode} fehlgeschlagen."
     };

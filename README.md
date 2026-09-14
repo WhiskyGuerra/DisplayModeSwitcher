@@ -134,6 +134,10 @@ werden nur veröffentlichte stabile Releases berücksichtigt; Entwürfe,
 Vorab-Releases und ungültige Versions-Tags werden ignoriert. Die Anwendung
 meldet getrennt, ob kein stabiles Release existiert, die installierte Version
 aktuell ist, eine neuere Version vorliegt oder GitHub nicht erreichbar ist.
+Private Repositorys liefern anonym keine Release-Metadaten. Es wird bewusst
+kein persönlicher GitHub-Token in der Anwendung oder ihren Einstellungen
+gespeichert; für automatische Updates muss die Release-Quelle öffentlich
+abrufbar sein.
 
 Der aktuelle Zwischenstand lädt noch keine Datei herunter und verändert die
 Installation nicht. Bei einer gefundenen Version kann lediglich die geprüfte
