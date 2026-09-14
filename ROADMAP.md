@@ -23,7 +23,7 @@ Die funktionale Basis ist abgeschlossen:
 - Autostart, Diagnosebericht, Profilspeicherung und V1-zu-V2-Migration sind
   vorhanden.
 
-Letzter automatischer Stand: Release-Build erfolgreich, **137/137 Tests**.
+Letzter automatischer Stand: Release-Build erfolgreich, **141/141 Tests**.
 
 Manuell bestätigt:
 
@@ -82,22 +82,36 @@ jeweils ausschließlich der gewählte Monitor änderte seine Auflösung.
 
 ### 2. Profilverwaltung kosmetisch überarbeiten
 
-Keine neue Profilfunktionalität, sondern eine verständlichere Oberfläche:
+Implementiert und automatisch geprüft; die manuelle UI-Abnahme bei
+unterschiedlicher Windows-Skalierung ist noch offen.
 
-- Monitorziel-Bereich und Profilbereich optisch klarer trennen.
-- Bedeutung von **Ziel aktualisieren**, **Profil aktualisieren** und
-  **Ziel neu zuordnen** eindeutiger machen.
-- Lange Monitor- und Anwendungstitel mit Tooltips oder geeigneten Spalten
-  lesbar halten.
-- Lade-, Fehler-, ungespeichert- und gespeichert-Zustände deutlicher zeigen.
-- Tab-Reihenfolge, Abstände, Mindestgröße und Verhalten bei hoher
-  Windows-Skalierung prüfen.
-- Keine impliziten Monitorwechsel oder automatische Zielauswahl im Zuge der
-  kosmetischen Arbeiten einführen.
+Die Oberfläche wurde ohne neue Profilfunktionalität verständlicher aufgebaut:
+
+- Anwendung, Monitorziele, Verhalten/Speichern und gespeicherte Profile sind
+  als klar benannte Schritte beziehungsweise Bereiche getrennt.
+- **Ziel hinzufügen**, **Änderungen am Ziel übernehmen**, **Auswahl leeren**
+  und **Änderungen am Profil speichern** benennen Umfang und Wirkung eindeutig.
+- Monitor und Zielmodus besitzen sichtbare Feldbeschriftungen.
+- Lange Monitor-, Modus-, Anwendungs-, Ziel- und Profileinträge bleiben über
+  verbreiterte Dropdowns, Tooltips und horizontale Listen erreichbar.
+- Lade-, Fehler-, Hinweis-, neue, ungespeicherte, gespeicherte, blockierte und
+  laufende Zustände sind ausdrücklich beschriftet und zusätzlich farblich
+  unterscheidbar.
+- Tab-Reihenfolge, Abstände, eine größere Mindestgröße und
+  `AutoScaleMode.Dpi` sind gesetzt.
+- Der Start ist als **Optional: Profil jetzt starten** klar von Auswahl und
+  Speichern getrennt und bleibt ein bewusster Klick.
+- Die Wahl eines bereits eindeutig vorhandenen Monitorziels öffnet dieses zur
+  Bearbeitung und verhindert dadurch versehentliche Dubletten. Es erfolgt
+  weiterhin keine automatische Neuzuordnung und keine Displayaktion.
+- Reine Präsentationslogik für Zustände und Aktionsnamen ist ohne fragile
+  Pixeltests abgedeckt.
 
 Abnahme: Neues Profil, bestehendes Profil, mehrere Ziele, fehlender Monitor und
 lange Namen jeweils bei 100 % und mindestens einer erhöhten Windows-Skalierung
 durchspielen.
+
+Automatisches Ergebnis: Release-Build ohne Warnungen, **141/141 Tests**.
 
 ### 3. Eigenes Icon-Set
 
@@ -166,10 +180,10 @@ in der Monitorzuordnung hat Vorrang vor kosmetischen Erweiterungen.
 
 ## Einstieg in die nächste Arbeitssitzung
 
-1. `git status` und letzten Commit prüfen; der Arbeitsbaum muss vor neuen
-   Änderungen nachvollziehbar sein.
-2. Release-Build und vollständigen Testlauf als Baseline ausführen.
-3. Den abgeschlossenen Arbeitsstand des manuellen Auswahlfensters
-   committen/pushen.
-4. Mit Arbeitspaket **2 – Profilverwaltung kosmetisch überarbeiten** beginnen,
-   ohne die bestehende sichere Zielauswahl funktional zu verändern.
+1. Die offene UI-Abnahme von Arbeitspaket 2 bei 100 % und erhöhter
+   Windows-Skalierung durchführen und das Ergebnis dokumentieren.
+2. Dabei neues Profil, bestehendes Profil, mehrere Ziele, fehlenden Monitor und
+   lange Namen prüfen; Speicher-, Start- und Displayverhalten müssen unverändert
+   bleiben.
+3. Nach erfolgreicher Abnahme den Arbeitsstand committen und pushen.
+4. Anschließend mit Arbeitspaket **3 – Eigenes Icon-Set** beginnen.

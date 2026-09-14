@@ -36,6 +36,18 @@ wird niemals automatisch anhand dieser Hinweise ersetzt. **Ziel neu zuordnen**
 zeigt stattdessen den alten und neuen Monitor und verlangt eine ausdrückliche
 Bestätigung sowie gegebenenfalls eine neue Moduswahl.
 
+Die Profilverwaltung führt in klar getrennten Bereichen durch Anwendung,
+Monitorziele, Verhalten und Speichern. Monitor und Zielmodus sind sichtbar
+beschriftet; **Ziel hinzufügen**, **Änderungen am Ziel übernehmen**,
+**Auswahl leeren** und **Änderungen am Profil speichern** unterscheiden die
+jeweilige Wirkung. Lade-, Fehler-, ungespeicherte, gespeicherte und blockierte
+Zustände werden ausdrücklich angezeigt. Lange Namen und Pfade bleiben über
+breitere Auswahllisten, Tooltips und horizontal scrollbare Listen vollständig
+erreichbar. Die Oberfläche skaliert anhand der Windows-DPI-Einstellung. Wird
+bei leerer Zielauswahl ein Monitor gewählt, der genau einem vorhandenen Ziel
+entspricht, öffnet die Oberfläche dieses Ziel direkt zur Bearbeitung. Das
+ändert weder die Monitorzuordnung noch den aktiven Anzeigemodus.
+
 Mit **Modus beibehalten** wird außerdem festgelegt, wie das Tool auf spätere
 Abweichungen reagiert:
 
@@ -58,7 +70,7 @@ gleichzeitig passenden Profilen schaltet das Tool aus Sicherheitsgründen nicht
 automatisch.
 
 Ein ausgewähltes Profil mit vorhandenem vollständigem EXE-Pfad kann über
-**Im Profilmodus starten** kontrolliert gestartet werden. Das Tool setzt und
+**Optional: Profil jetzt starten** kontrolliert gestartet werden. Das Tool setzt und
 bestätigt zuerst den Zielmodus und wählt danach eine klar ausgewiesene
 Startart. Dieser Start ist strikt optional und geschieht ausschließlich durch
 einen bewussten Klick auf diese Schaltfläche. Profilanlage, Tool-Autostart und
