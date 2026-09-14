@@ -24,7 +24,11 @@ namespace DisplayModeSwitcher
             _autostart = autostart;
             _profileManager = profileManager;
             _topology = topology;
-            _manualDisplay = new ManualDisplaySwitcher(topology, targetedDisplay, () => _profileManager.Status);
+            _manualDisplay = new ManualDisplaySwitcher(
+                topology,
+                targetedDisplay,
+                () => _profileManager.Status,
+                _profileManager.RecordDiagnosticEvent);
             _applicationIcon = ApplicationIconProvider.Create();
             contextMenu = new ContextMenuStrip();
 

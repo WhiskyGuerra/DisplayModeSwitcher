@@ -203,7 +203,7 @@ public sealed class ManualDisplayForm : Form
             return;
         }
 
-        var result = _switcher.Switch(monitor.MonitorDevicePath, mode);
+        var result = _switcher.Switch(monitor.MonitorDevicePath, mode, monitor.Label);
         if (!result.Success)
         {
             MessageBox.Show(this, result.Error ?? "Der Anzeigemodus konnte nicht geändert werden.", "Anzeigemodus", MessageBoxButtons.OK, MessageBoxIcon.Warning);

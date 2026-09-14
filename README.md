@@ -109,6 +109,23 @@ gleichwertig, damit Rundungen von Windows oder Treiber keine unnötigen Wechsel
 auslösen. Der konkret konfigurierte Modus bleibt weiterhin das Ziel beim
 tatsächlichen Setzen. Der Status ist im Tray-Menü sichtbar.
 
+### Diagnose
+
+**Diagnose kopieren** im Tray legt einen kompakten Bericht in die
+Zwischenablage. Neben Laufzeit, Profilzustand und den aktiven Monitorzielen
+enthält er die letzten relevanten Ereignisse. Ein bewusster manueller Wechsel
+wird mit Monitorname, kompakter Gerätekennung, Ausgangsmodus, Zielmodus und
+Ergebnis protokolliert. Die initiale Profilaktivierung führt jedes Monitorziel
+einmal einzeln auf; tatsächliche spätere Nachsetzungen nennen ebenfalls das
+betroffene Ziel und beide Modi. Erfolgreiche Hintergrundprüfungen ohne
+Displayänderung erzeugen keine zusätzlichen Einzelereignisse.
+
+Bei einem Fehler sollte der Bericht zusammen mit App-Version beziehungsweise
+Commit, Windows-Version, Grafikkartentreiber und dem beobachteten Verhalten
+aufbewahrt werden. Der Bericht enthält Prozess- und Monitorinformationen, aber
+keine Speicherinhalte eines Spiels und keine Interaktion mit Anti-Cheat-
+Systemen.
+
 ### Autostart mit Windows
 
 Der Menüpunkt **Autostart mit Windows** verwaltet den Autostart für den

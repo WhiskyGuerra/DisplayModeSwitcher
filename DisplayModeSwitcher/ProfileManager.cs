@@ -1097,6 +1097,7 @@ public sealed class TargetedProfileMonitor
 
     public ProfileMonitorStatus Status => Volatile.Read(ref _status);
     public IReadOnlyList<ProfileMonitorDiagnosticEvent> DiagnosticEvents => _events.Snapshot();
+    internal void RecordDiagnosticEvent(DateTime timestampUtc, string message) => _events.Add(timestampUtc, message);
     public LaunchPlan ResolveLaunchPlan(string executablePath) => _launchPlans.Resolve(executablePath);
 
     public void Start(DateTime utcNow)
@@ -1248,6 +1249,7 @@ public sealed class TargetedProfileMonitor
             active.ReapplyCount++;
         if (result.Success)
         {
+            var wasInitialActivation = !active.InitialApplied;
             if (!active.InitialApplied)
             {
                 // Only the first successful batch owns restoration. Reapply receipts
@@ -1269,8 +1271,17 @@ public sealed class TargetedProfileMonitor
                 active.ProfileProcess, PrimaryMode(active.Profile), reapply
                     ? targetWasChanged ? "Ziel-Batch nachgesetzt" : "Ziel-Batch geprüft; keine Abweichung"
                     : "Ziel-Batch angewendet", utcNow, active.LaunchPlan.Strategy);
+            if (wasInitialActivation)
+            {
+                foreach (var receipt in result.Receipts.OrderBy(item => item.TargetIndex))
+                    AddEvent(utcNow, FormatTargetChange(active, receipt, "Profilziel aktiviert"));
+            }
             if (reapply && targetWasChanged)
+            {
                 AddEvent(utcNow, $"Abweichende Profilziele nachgesetzt ({FormatReapplies(active)}).");
+                foreach (var receipt in result.Receipts.Where(item => item.ToolChanged).OrderBy(item => item.TargetIndex))
+                    AddEvent(utcNow, FormatTargetChange(active, receipt, "Profilziel nachgesetzt"));
+            }
             return;
         }
         var error = DescribeErrors(result.Errors);
@@ -1454,6 +1465,14 @@ public sealed class TargetedProfileMonitor
     }
     private static DisplayMode? PrimaryMode(DisplayProfile profile) => profile.Targets.FirstOrDefault()?.Mode;
     private static string FormatReapplies(Active active) => active.Profile.Policy == ProfileRetentionPolicy.Startup ? $"{active.ReapplyCount}/{MaximumStartupReapplies}" : active.Profile.Policy == ProfileRetentionPolicy.Continuous ? "fortlaufend" : "0";
+    private static string FormatTargetChange(Active active, TargetedDisplayReceipt receipt, string action)
+    {
+        var selector = receipt.TargetIndex >= 0 && receipt.TargetIndex < active.Profile.Targets.Count
+            ? DisplayProfilePresentation.DescribeTargets(new DisplayProfile(ProfileRetentionPolicy.Once, [active.Profile.Targets[receipt.TargetIndex]]))
+            : "Unbekanntes Monitorziel";
+        var result = receipt.ToolChanged ? "angewendet" : "bereits aktiv";
+        return $"{action}: {selector}; Pfad {DiagnosticReportFormatter.FormatDevicePathShort(receipt.MonitorDevicePath)}; Ausgang {DiagnosticReportFormatter.FormatMode(ToDisplayMode(receipt.OriginalMode))}; Ziel {DiagnosticReportFormatter.FormatMode(ToDisplayMode(receipt.TargetMode))}; Ergebnis {result}.";
+    }
     private static string DescribeErrors(IReadOnlyList<TargetedDisplayError> errors) => errors.Count == 0 ? "Unbekannter Displayfehler." : string.Join(" | ", errors.Select(item => item.Message).Distinct());
     private static string DescribeDebts(IReadOnlyList<DisplayRestoreDebt> debts) => debts.Count == 0 ? "–" : string.Join(" | ", debts.Select(item => $"{item.Receipt.MonitorDevicePath}: {item.Error.Message}").Distinct());
     private static IReadOnlyList<TargetedDisplayReceipt> CloneReceipts(IEnumerable<TargetedDisplayReceipt> receipts) => receipts.Select(item => item with { OriginalMode = item.OriginalMode with { }, TargetMode = item.TargetMode with { } }).ToArray();
@@ -1503,6 +1522,8 @@ public sealed class ProfileManager : IDisposable
 
     public ProfileMonitorStatus Status => _monitor.Status;
     public IReadOnlyList<ProfileMonitorDiagnosticEvent> DiagnosticEvents => _monitor.DiagnosticEvents;
+    internal void RecordDiagnosticEvent(DateTime timestampUtc, string message) =>
+        _monitor.RecordDiagnosticEvent(timestampUtc, message);
 
     public Task<LaunchPlan> ResolveLaunchPlanAsync(string executablePath)
     {

@@ -102,6 +102,15 @@ public static class DiagnosticReportFormatter
     }
 
     public static string FormatMode(DisplayMode? mode) => mode is null ? "Nicht verfügbar" : $"{mode.Width}x{mode.Height} @ {mode.Frequency}Hz";
+    public static string FormatDevicePathShort(string monitorDevicePath)
+    {
+        var compact = monitorDevicePath.Trim();
+        if (compact.StartsWith(@"\\?\", StringComparison.Ordinal)) compact = compact[4..];
+        var classGuid = compact.IndexOf("#{", StringComparison.Ordinal);
+        if (classGuid >= 0) compact = compact[..classGuid];
+        return compact.Length <= 72 ? compact : $"{compact[..48]}…{compact[^16..]}";
+    }
+
     public static string DisplayState(ProfileMonitorState state) => state switch
     {
         ProfileMonitorState.Idle => "Wartet",

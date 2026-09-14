@@ -137,6 +137,7 @@ var tests = new (string Name, Action Run)[]
     ("Unsichere Tray-Ziele und aktive Profile blockieren manuelles Schalten", ManualDisplaySwitcherTests.UnsafeEndpointsAndActiveProfilesAreBlocked),
     ("Tray-Moduslisten fassen logische Treiberdubletten zusammen", ManualDisplaySwitcherTests.LogicalModeDuplicatesAreCollapsed),
     ("Fehler der gezielten Pipeline erreichen den manuellen Aufrufer", ManualDisplaySwitcherTests.ApplyErrorsArePropagated),
+    ("Manuelle Displaywechsel erzeugen eine hilfreiche Diagnose", ManualDisplaySwitcherTests.ManualChangesProduceUsefulDiagnostics),
     ("Manuelles Fenster wählt nur einen sicheren Primärmonitor vor", ManualDisplaySwitcherTests.WindowSelectionDefaultsToSafePrimaryMonitor),
     ("Unsicherer, fehlender oder mehrdeutiger Primärmonitor bleibt ungewählt", ManualDisplaySwitcherTests.UnsafeMissingOrAmbiguousPrimaryMonitorIsNotPreselected),
     ("Monitorwahl übernimmt die aktuelle Auflösung", ManualDisplaySwitcherTests.MonitorSelectionDefaultsToItsCurrentResolution),

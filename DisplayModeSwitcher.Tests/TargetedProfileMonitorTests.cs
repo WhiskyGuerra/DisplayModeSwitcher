@@ -85,6 +85,11 @@ public static class TargetedProfileMonitorTests
         startupMonitor.Start(T0); startupMonitor.Poll(T0); startupMonitor.Poll(T0.AddSeconds(1)); startupMonitor.Poll(T0.AddSeconds(2)); startupMonitor.Poll(T0.AddSeconds(3)); startupMonitor.Poll(T0.AddSeconds(4)); startupMonitor.Stop();
         Expect(startup.Applies.Count == 4, "Startup zählt Nachsetzungen als Batch und begrenzt sie auf drei.");
         Expect(startup.Restores.Single().Single().OriginalMode.Frequency == 60, "Reapply darf den initialen Originalbeleg nicht überschreiben.");
+        Expect(startupMonitor.DiagnosticEvents.Count(item => item.Message.Contains("Profilziel nachgesetzt", StringComparison.Ordinal)) == 3,
+            "Jede tatsächliche Nachsetzung muss genau einen zielbezogenen Diagnoseeintrag erzeugen.");
+        Expect(startupMonitor.DiagnosticEvents.Any(item => item.Message.Contains("Ausgang 1920x1080 @ 77Hz", StringComparison.Ordinal)
+            && item.Message.Contains("Ziel 1920x1080 @ 120Hz", StringComparison.Ordinal)),
+            "Die Nachsetzungsdiagnose muss beobachteten Ausgang und Ziel enthalten.");
 
         var continuous = new FakeTargetedDisplay(); var continuousMonitor = Monitor(process.ExecutablePath, Profile(ProfileRetentionPolicy.Continuous), continuous, new FakeProcesses(process));
         continuousMonitor.Start(T0); continuousMonitor.Poll(T0); continuousMonitor.Poll(T0.AddSeconds(1)); continuousMonitor.Poll(T0.AddSeconds(2));
@@ -267,6 +272,12 @@ public static class TargetedProfileMonitorTests
         Expect(status.Targets?.Count == 2 && status.Targets[0].MonitorDevicePath == "PATH-A" && status.Targets[1].MonitorDevicePath == "PATH-B", "Status muss konkrete per-target Pfade enthalten.");
         Expect(report.Contains("Monitorziele") && report.Contains("PATH-A") && report.Contains("PATH-B"), "Diagnose muss mehrere Ziele verständlich ausgeben.");
         Expect(report.Contains("Startart: Extern erkannt"), "Automatisch erkannte Prozesse dürfen nicht als kontrollierter Direktstart bezeichnet werden.");
+        Expect(monitor.DiagnosticEvents.Any(item => item.Message.Contains("Profilziel aktiviert: A", StringComparison.Ordinal)
+            && item.Message.Contains("Ausgang 1920x1080 @ 60Hz", StringComparison.Ordinal)
+            && item.Message.Contains("Ziel 1920x1080 @ 100Hz", StringComparison.Ordinal)
+            && item.Message.Contains("Ergebnis angewendet", StringComparison.Ordinal)), "Initiale Aktivierung muss das geänderte Ziel einzeln diagnostizieren.");
+        Expect(monitor.DiagnosticEvents.Any(item => item.Message.Contains("Profilziel aktiviert: B", StringComparison.Ordinal)
+            && item.Message.Contains("Ergebnis bereits aktiv", StringComparison.Ordinal)), "Auch bereits aktive Ziele müssen im initialen Batch nachvollziehbar sein.");
     }
 
     private static void RunInitial(DisplayProfile profile)

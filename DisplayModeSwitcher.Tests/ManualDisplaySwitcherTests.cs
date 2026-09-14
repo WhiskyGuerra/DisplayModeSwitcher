@@ -57,6 +57,34 @@ public static class ManualDisplaySwitcherTests
         Expect(!result.Success && result.Error!.Contains("nicht mehr aktiv"));
     }
 
+    public static void ManualChangesProduceUsefulDiagnostics()
+    {
+        var events = new List<ProfileMonitorDiagnosticEvent>();
+        var display = new FakeDisplay();
+        var sut = new ManualDisplaySwitcher(
+            new FakeTopology(Endpoint(PathA, "Alpha", 1)),
+            display,
+            () => ProfileMonitorStatus.Idle,
+            (timestamp, message) => events.Add(new(timestamp, message)));
+
+        Expect(sut.Switch(PathA, Mode(1280, 720, 60), "Alpha (Primär)").Success);
+
+        var message = events.Single().Message;
+        Expect(message.Contains("Alpha (Primär)", StringComparison.Ordinal));
+        Expect(message.Contains("DISPLAY#A", StringComparison.Ordinal));
+        Expect(message.Contains("Ausgang 1920x1080 @ 60Hz", StringComparison.Ordinal));
+        Expect(message.Contains("Ziel 1280x720 @ 60Hz", StringComparison.Ordinal));
+        Expect(message.Contains("Ergebnis angewendet", StringComparison.Ordinal));
+
+        var failing = new ManualDisplaySwitcher(
+            new FakeTopology(Endpoint(PathA, "Alpha", 1)),
+            new FakeDisplay { Error = "Monitor getrennt" },
+            () => ProfileMonitorStatus.Idle,
+            (timestamp, diagnostic) => events.Add(new(timestamp, diagnostic)));
+        Expect(!failing.Switch(PathA, Mode(800, 600, 60), "Alpha").Success);
+        Expect(events.Last().Message.Contains("fehlgeschlagen: Monitor getrennt", StringComparison.Ordinal));
+    }
+
     public static void WindowSelectionDefaultsToSafePrimaryMonitor()
     {
         var topology = new FakeTopology(Endpoint(PathA, "Alpha", 1), Endpoint(PathB, "Beta", 2));
@@ -205,9 +233,14 @@ public static class ManualDisplaySwitcherTests
         public TargetedDisplayApplyResult Apply(IReadOnlyList<DisplayProfileTarget> targets)
         {
             Applies.Add(targets);
-            return Error is null
-                ? new TargetedDisplayApplyResult(true, [], [], [])
-                : new TargetedDisplayApplyResult(false, [], [new TargetedDisplayError(0, PathA, TargetedDisplayStage.Apply, ErrorCode, Error)], []);
+            if (Error is not null)
+                return new TargetedDisplayApplyResult(false, [], [new TargetedDisplayError(0, PathA, TargetedDisplayStage.Apply, ErrorCode, Error)], []);
+
+            var target = targets.Single();
+            var path = ((SpecificMonitor)target.MonitorSelector).MonitorDevicePath;
+            return new TargetedDisplayApplyResult(true,
+                [new TargetedDisplayReceipt(0, path, @"\\.\DISPLAY1", Native(1920, 1080, 60), Native(target.Mode.Width, target.Mode.Height, target.Mode.Frequency), true)],
+                [], []);
         }
         public TargetedDisplayRestoreResult Restore(IReadOnlyList<TargetedDisplayReceipt> receipts) => throw new InvalidOperationException("Manuelles Schalten darf keinen Restore anfordern.");
     }

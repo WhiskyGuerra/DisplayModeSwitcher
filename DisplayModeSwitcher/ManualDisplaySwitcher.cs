@@ -21,12 +21,18 @@ public sealed class ManualDisplaySwitcher
     private readonly IDisplayTopologyService _topology;
     private readonly ITargetedDisplayService _display;
     private readonly Func<ProfileMonitorStatus> _profileStatus;
+    private readonly Action<DateTime, string>? _diagnosticEvent;
 
-    public ManualDisplaySwitcher(IDisplayTopologyService topology, ITargetedDisplayService display, Func<ProfileMonitorStatus> profileStatus)
+    public ManualDisplaySwitcher(
+        IDisplayTopologyService topology,
+        ITargetedDisplayService display,
+        Func<ProfileMonitorStatus> profileStatus,
+        Action<DateTime, string>? diagnosticEvent = null)
     {
         _topology = topology ?? throw new ArgumentNullException(nameof(topology));
         _display = display ?? throw new ArgumentNullException(nameof(display));
         _profileStatus = profileStatus ?? throw new ArgumentNullException(nameof(profileStatus));
+        _diagnosticEvent = diagnosticEvent;
     }
 
     public ManualDisplayMenuResult RefreshMenu()
@@ -45,7 +51,7 @@ public sealed class ManualDisplaySwitcher
 
     public string? CurrentProfileBlockReason() => ProfileBlockReason(_profileStatus());
 
-    public ManualDisplaySwitchResult Switch(string monitorDevicePath, DisplayMode mode)
+    public ManualDisplaySwitchResult Switch(string monitorDevicePath, DisplayMode mode, string? monitorLabel = null)
     {
         ArgumentNullException.ThrowIfNull(mode);
         var blocked = ProfileBlockReason(_profileStatus());
@@ -58,10 +64,39 @@ public sealed class ManualDisplaySwitcher
                 new SpecificMonitor(monitorDevicePath, "Manuelle Tray-Auswahl"),
                 new DisplayMode { Width = mode.Width, Height = mode.Height, Frequency = mode.Frequency, Label = mode.Label })]);
         }
-        catch (Exception ex) { return new(false, $"Der Anzeigemodus konnte nicht geändert werden: {ex.Message}"); }
-        return result.Success
-            ? new(true, null)
-            : new(false, result.Errors.FirstOrDefault()?.Message ?? "Der Anzeigemodus konnte nicht geändert werden.");
+        catch (Exception ex)
+        {
+            var error = $"Der Anzeigemodus konnte nicht geändert werden: {ex.Message}";
+            RecordSwitch(monitorLabel, monitorDevicePath, null, mode, false, error);
+            return new(false, error);
+        }
+
+        var receipt = result.Receipts.SingleOrDefault();
+        var resultError = result.Errors.FirstOrDefault()?.Message ?? "Der Anzeigemodus konnte nicht geändert werden.";
+        RecordSwitch(
+            monitorLabel,
+            monitorDevicePath,
+            receipt is null ? null : ToDisplayMode(receipt.OriginalMode),
+            mode,
+            result.Success,
+            result.Success ? (receipt?.ToolChanged == true ? "angewendet" : "bereits aktiv") : resultError);
+        return result.Success ? new(true, null) : new(false, resultError);
+    }
+
+    private void RecordSwitch(
+        string? monitorLabel,
+        string monitorDevicePath,
+        DisplayMode? original,
+        DisplayMode target,
+        bool success,
+        string result)
+    {
+        if (_diagnosticEvent is null) return;
+        var monitor = string.IsNullOrWhiteSpace(monitorLabel) ? "Unbenannter Monitor" : monitorLabel.Trim();
+        var originalText = original is null ? "nicht verfügbar" : DiagnosticReportFormatter.FormatMode(original);
+        var outcome = success ? result : $"fehlgeschlagen: {result}";
+        _diagnosticEvent(DateTime.UtcNow,
+            $"Manueller Displaywechsel: {monitor}; Pfad {DiagnosticReportFormatter.FormatDevicePathShort(monitorDevicePath)}; Ausgang {originalText}; Ziel {DiagnosticReportFormatter.FormatMode(target)}; Ergebnis {outcome}.");
     }
 
     internal static string? ProfileBlockReason(ProfileMonitorStatus status) => status.State == ProfileMonitorState.Idle

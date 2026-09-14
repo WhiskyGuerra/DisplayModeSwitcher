@@ -23,7 +23,7 @@ Die funktionale Basis ist abgeschlossen:
 - Autostart, Diagnosebericht, Profilspeicherung und V1-zu-V2-Migration sind
   vorhanden.
 
-Letzter automatischer Stand: Release-Build erfolgreich, **141/141 Tests**.
+Letzter automatischer Stand: Release-Build erfolgreich, **142/142 Tests**.
 
 Manuell bestätigt:
 
@@ -161,6 +161,9 @@ in der Monitorzuordnung hat Vorrang vor kosmetischen Erweiterungen.
 
 ### 5. Diagnose und Dokumentation abrunden
 
+Implementiert und automatisch geprüft; ein realer Diagnosebericht nach einem
+manuellen Hardwarewechsel bleibt Teil der manuellen Abnahme.
+
 - Manuelle Displaywechsel mit Monitorname, Gerätepfad-Kurzform, Ausgangs- und
   Zielmodus nachvollziehbar diagnostizieren.
 - Initiale Profilaktivierung und spätere Nachsetzungen pro Monitor verständlich
@@ -170,6 +173,13 @@ in der Monitorzuordnung hat Vorrang vor kosmetischen Erweiterungen.
   allgemeine Testmatrix formulieren.
 - Sicherheitsgrenzen für Steam, VAC und andere Anti-Cheat-Systeme beibehalten
   und dokumentieren.
+
+Ergebnis: Manuelle Wechsel sowie initiale Profilaktivierungen und tatsächliche
+Nachsetzungen werden zielbezogen mit Monitorname beziehungsweise Ziel,
+kompakter Gerätekennung, Ausgangsmodus, Zielmodus und Ergebnis protokolliert.
+No-op-Prüfungen erzeugen keine zusätzlichen Einzelereignisse. README,
+allgemeine Testbeschreibung und Anti-Cheat-Grenzen entsprechen dem aktuellen
+Mehrmonitor-Stand.
 
 ### 6. Updatefunktion über GitHub Releases
 
@@ -218,5 +228,6 @@ Nicht als direktes `git pull`, sondern als kontrollierter Binär-Updatepfad:
 2. Danach die Neo-G9-Abnahme auf dem zweiten Rechner ausführen.
 3. Abweichungen immer zusammen mit App-Version beziehungsweise Commit und dem
    Diagnosebericht dokumentieren.
-4. Nach abgeschlossener Hardwareabnahme mit Arbeitspaket **5 – Diagnose und
-   Dokumentation abrunden** fortfahren.
+4. Die Hardwareabnahme kann unabhängig von der Entwicklung fortgeführt werden;
+   der nächste Implementierungsschritt ist Arbeitspaket **6 – Updatefunktion
+   über GitHub Releases**.
