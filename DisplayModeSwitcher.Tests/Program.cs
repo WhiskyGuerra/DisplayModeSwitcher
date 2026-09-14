@@ -132,7 +132,14 @@ var tests = new (string Name, Action Run)[]
     ("Manuelles Tray-Schalten übergibt nur den expliziten Gerätepfad", ManualDisplaySwitcherTests.AppliesOnlyExplicitSelectedPathAndKeepsMonitorsSeparate),
     ("Unsichere Tray-Ziele und aktive Profile blockieren manuelles Schalten", ManualDisplaySwitcherTests.UnsafeEndpointsAndActiveProfilesAreBlocked),
     ("Tray-Moduslisten fassen logische Treiberdubletten zusammen", ManualDisplaySwitcherTests.LogicalModeDuplicatesAreCollapsed),
-    ("Fehler der gezielten Pipeline erreichen den manuellen Aufrufer", ManualDisplaySwitcherTests.ApplyErrorsArePropagated)
+    ("Fehler der gezielten Pipeline erreichen den manuellen Aufrufer", ManualDisplaySwitcherTests.ApplyErrorsArePropagated),
+    ("Manuelles Fenster wählt nur einen sicheren Primärmonitor vor", ManualDisplaySwitcherTests.WindowSelectionDefaultsToSafePrimaryMonitor),
+    ("Unsicherer, fehlender oder mehrdeutiger Primärmonitor bleibt ungewählt", ManualDisplaySwitcherTests.UnsafeMissingOrAmbiguousPrimaryMonitorIsNotPreselected),
+    ("Monitorwahl übernimmt die aktuelle Auflösung", ManualDisplaySwitcherTests.MonitorSelectionDefaultsToItsCurrentResolution),
+    ("Auflösungswahl übernimmt die höchste Bildwiederholrate", ManualDisplaySwitcherTests.ResolutionSelectionDefaultsToHighestFrequency),
+    ("Manuelles Fenster reagiert auf Profilstatusänderungen", ManualDisplaySwitcherTests.WindowSelectionTracksProfileBlockingWhileOpen),
+    ("Manuelle Auswahl wird bei Monitortrennung sicher verworfen", ManualDisplaySwitcherTests.FreshTopologyClearsDisconnectedSelection),
+    ("Aktualisieren übernimmt nur eine noch exakt vorhandene Auswahl", ManualDisplaySwitcherTests.RefreshCanRestoreOnlyAnExactExplicitSelection)
 };
 
 var failures = new List<string>();

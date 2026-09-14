@@ -1,6 +1,6 @@
 # Roadmap
 
-Stand: 13. September 2026
+Stand: 14. September 2026
 
 ## Aktueller Checkpoint
 
@@ -18,12 +18,12 @@ Die funktionale Basis ist abgeschlossen:
 - Steam-Starts sind optional und verwenden ausschließlich den offiziellen
   `steam://run/<App-ID>`-Aufruf. Die normale Profilerkennung startet keine
   Anwendung.
-- Das Tray unterstützt manuelles Umschalten über
-  **Monitor → Auflösung → Bildwiederholrate**.
+- Das Tray öffnet für manuelles Umschalten ein kompaktes Auswahlfenster mit
+  getrennten Feldern für Monitor, Auflösung und Bildwiederholrate.
 - Autostart, Diagnosebericht, Profilspeicherung und V1-zu-V2-Migration sind
   vorhanden.
 
-Letzter automatischer Stand: Release-Build erfolgreich, **130/130 Tests**.
+Letzter automatischer Stand: Release-Build erfolgreich, **137/137 Tests**.
 
 Manuell bestätigt:
 
@@ -42,9 +42,11 @@ wurde.
 
 ### 1. Kompaktes Fenster für manuelles Umschalten
 
-Das dreistufige Tray-Untermenü ist bei vielen Auflösungen funktional, aber
-unübersichtlich. Der Tray-Eintrag **Anzeigemodus manuell...** soll deshalb ein
-kleines WinForms-Fenster öffnen.
+Implementiert; automatische Prüfung und Hardware-Abnahme abgeschlossen.
+
+Das frühere dreistufige Tray-Untermenü war bei vielen Auflösungen funktional,
+aber unübersichtlich. Der Tray-Eintrag **Anzeigemodus manuell...** öffnet nun
+ein kleines WinForms-Fenster.
 
 Vorgesehener Umfang:
 
@@ -52,12 +54,15 @@ Vorgesehener Umfang:
 - Aktuellen Modus des gewählten Monitors sichtbar anzeigen.
 - Zielauflösung und Bildwiederholrate in zwei übersichtlichen Feldern wählen.
 - Erst ein ausdrücklicher Klick auf **Anwenden** führt den Wechsel aus.
+- Der eindeutige, sichere Primärmonitor, seine aktuell angebotene Auflösung
+  und dafür die höchste verfügbare Bildwiederholrate werden als Bedienhilfe
+  vorausgewählt. Ohne eindeutigen sicheren Primärmonitor bleibt die Wahl leer.
 - Während eines aktiven, startenden oder wiederhergestellten Profils bleibt
   die Funktion gesperrt und erklärt den Grund.
 - Weiterhin ausschließlich `ManualDisplaySwitcher` und die sichere,
   zielgebundene Display-Pipeline verwenden.
-- Keine automatische Monitorvorauswahl, kein Fallback auf den Primärmonitor
-  und kein automatischer Restore für manuelle Wechsel.
+- Keine Vorauswahl unsicherer Monitore, kein Umschalten ohne **Anwenden** und
+  kein automatischer Restore für manuelle Wechsel.
 - Das bisherige lange Untermenü anschließend entfernen. Optional kann ein
   kurzer Eintrag für den aktuellen Modus bestehen bleiben, sofern er keine
   zweite Umschaltlogik erzeugt.
@@ -71,6 +76,9 @@ Abnahme:
 5. Während eines aktiven Ride-Profils prüfen, dass **Anwenden** gesperrt ist.
 6. Monitor nach geöffnetem Fenster trennen und ein sicheres, verständliches
    Fehlerverhalten prüfen.
+
+Ergebnis: Der Nutzer hat das Fenster mit zwei Monitoren erfolgreich geprüft;
+jeweils ausschließlich der gewählte Monitor änderte seine Auflösung.
 
 ### 2. Profilverwaltung kosmetisch überarbeiten
 
@@ -161,9 +169,7 @@ in der Monitorzuordnung hat Vorrang vor kosmetischen Erweiterungen.
 1. `git status` und letzten Commit prüfen; der Arbeitsbaum muss vor neuen
    Änderungen nachvollziehbar sein.
 2. Release-Build und vollständigen Testlauf als Baseline ausführen.
-3. Mit Arbeitspaket **1 – Kompaktes Fenster für manuelles Umschalten** beginnen.
-4. UI und Logik trennen: Das Fenster darf nur den bestehenden
-   `ManualDisplaySwitcher` bedienen.
-5. Nach automatischen Tests zuerst den C49HG9x und anschließend einen VC279
-   manuell testen.
-6. Danach committen/pushen und erst mit Arbeitspaket 2 fortfahren.
+3. Den abgeschlossenen Arbeitsstand des manuellen Auswahlfensters
+   committen/pushen.
+4. Mit Arbeitspaket **2 – Profilverwaltung kosmetisch überarbeiten** beginnen,
+   ohne die bestehende sichere Zielauswahl funktional zu verändern.

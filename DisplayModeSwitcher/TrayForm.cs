@@ -26,8 +26,12 @@ namespace DisplayModeSwitcher
             _manualDisplay = new ManualDisplaySwitcher(topology, targetedDisplay, () => _profileManager.Status);
             contextMenu = new ContextMenuStrip();
 
-            var manualModeItem = new ToolStripMenuItem("Anzeigemodus manuell");
-            manualModeItem.DropDownOpening += (s, e) => RefreshManualModes(manualModeItem);
+            var manualModeItem = new ToolStripMenuItem("Anzeigemodus manuell...");
+            manualModeItem.Click += (s, e) =>
+            {
+                using var form = new ManualDisplayForm(_manualDisplay);
+                form.ShowDialog();
+            };
             contextMenu.Items.Add(manualModeItem);
 
             var autostartItem = new ToolStripMenuItem("Autostart mit Windows");
@@ -146,49 +150,6 @@ namespace DisplayModeSwitcher
             trayIcon.Dispose();
             contextMenu.Dispose();
             base.OnFormClosed(e);
-        }
-
-        private void RefreshManualModes(ToolStripMenuItem root)
-        {
-            root.DropDownItems.Clear();
-            var menu = _manualDisplay.RefreshMenu();
-            if (!menu.Success || menu.Monitors.Count == 0)
-            {
-                root.DropDownItems.Add(new ToolStripMenuItem(menu.Error ?? "Keine Monitore verfügbar") { Enabled = false });
-                return;
-            }
-
-            foreach (var monitor in menu.Monitors)
-            {
-                var visibleLabel = monitor.Enabled ? monitor.Label : $"{monitor.Label} — {monitor.DisabledReason ?? "nicht schaltbar"}";
-                var monitorItem = new ToolStripMenuItem(visibleLabel) { Enabled = monitor.Enabled };
-                monitorItem.ToolTipText = monitor.DisabledReason ?? string.Empty;
-                if (!monitor.Enabled)
-                {
-                    root.DropDownItems.Add(monitorItem);
-                    continue;
-                }
-
-                foreach (var group in monitor.Modes.GroupBy(mode => (mode.Width, mode.Height))
-                    .OrderByDescending(group => group.Key.Width).ThenByDescending(group => group.Key.Height))
-                {
-                    var resolutionItem = new ToolStripMenuItem($"{group.Key.Width}x{group.Key.Height}");
-                    foreach (var mode in group.OrderByDescending(mode => mode.Frequency))
-                    {
-                        var capturedMode = mode;
-                        var frequencyItem = new ToolStripMenuItem($"{mode.Frequency} Hz");
-                        frequencyItem.Click += (s, e) =>
-                        {
-                            var result = _manualDisplay.Switch(monitor.MonitorDevicePath!, capturedMode);
-                            if (!result.Success)
-                                MessageBox.Show(result.Error ?? "Der Anzeigemodus konnte nicht geändert werden.", "Anzeigemodus", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                        };
-                        resolutionItem.DropDownItems.Add(frequencyItem);
-                    }
-                    monitorItem.DropDownItems.Add(resolutionItem);
-                }
-                root.DropDownItems.Add(monitorItem);
-            }
         }
     }
 }

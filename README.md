@@ -14,8 +14,16 @@ Beim Beenden des Prozesses wird der zuvor aktive Modus wiederhergestellt.
 
 ## Bedienung
 
-Nach dem Start läuft das Tool ohne Hauptfenster im Infobereich. Über das
-Tray-Menü können Auflösung und Bildwiederholrate manuell gewählt werden.
+Nach dem Start läuft das Tool ohne Hauptfenster im Infobereich. Der Tray-Eintrag
+**Anzeigemodus manuell...** öffnet ein kompaktes Auswahlfenster. Dort werden
+Monitor, Auflösung und Bildwiederholrate bewusst getrennt gewählt; erst
+**Anwenden** führt den Wechsel aus. **Aktualisieren** liest Monitor-Topologie,
+aktuelle Modi und verfügbare Modi erneut von Windows. Beim Öffnen wird der
+eindeutige, sicher nutzbare Primärmonitor vorausgewählt. Die Monitorwahl übernimmt
+dessen aktuelle Auflösung, sofern sie angeboten wird; für eine gewählte
+Auflösung wird die höchste verfügbare Bildwiederholrate vorgeschlagen. Fehlt
+ein eindeutiger sicherer Primärmonitor, bleibt die Monitorwahl leer. Keine
+dieser Vorauswahlen schaltet selbsttätig um.
 
 Unter **Profile verwalten...** werden pro Programm ein oder mehrere explizite
 Monitorziele mit jeweils eigenem Zielmodus gespeichert. Neue Profile beginnen
@@ -127,13 +135,12 @@ Dateifehler.
 - Die Profilverwaltung unterstützt die explizite Wahl des dynamischen
   Primärmonitors, spezifische Monitore und mehrere Ziele. Nicht persistierbare,
   mehrdeutige und geklonte Endpoints werden fail-safe nicht angeboten oder
-  blockiert. Das Tray bietet für manuelle Wechsel die Hierarchie
-  **Monitor → Auflösung → Hz**. Dabei wird ausschließlich der angeklickte
-  physische Monitor über seinen stabilen Gerätepfad temporär umgeschaltet;
+  blockiert. Das manuelle Auswahlfenster schaltet ausschließlich den ausdrücklich
+  gewählten physischen Monitor über seinen stabilen Gerätepfad temporär um;
   es entsteht weder ein Profil noch ein automatischer Restore-Anspruch.
   Unklare, nicht persistierbare oder geklonte Ziele bleiben deaktiviert. Solange
-  die Profilüberwachung nicht wartet, ist das manuelle Umschalten gesperrt,
-  damit beide Wege nicht gegeneinander arbeiten.
+  die Profilüberwachung nicht wartet, bleibt **Anwenden** gesperrt und zeigt den
+  Grund an. Statusänderungen bei geöffnetem Fenster werden berücksichtigt.
 - Geschützte oder bereits beendete Prozesse können nicht als Profil verwendet
   werden.
 - Epic, GOG und sonstige Launcher werden derzeit nicht eigens erkannt. Sie

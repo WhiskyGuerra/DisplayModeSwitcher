@@ -57,10 +57,123 @@ public static class ManualDisplaySwitcherTests
         Expect(!result.Success && result.Error!.Contains("nicht mehr aktiv"));
     }
 
-    private static DisplayEndpoint Endpoint(string path, string name, uint source) => new(
+    public static void WindowSelectionDefaultsToSafePrimaryMonitor()
+    {
+        var topology = new FakeTopology(Endpoint(PathA, "Alpha", 1), Endpoint(PathB, "Beta", 2));
+        var menu = new ManualDisplaySwitcher(topology, new FakeDisplay(), () => ProfileMonitorStatus.Idle).RefreshMenu();
+        var selection = new ManualDisplaySelection();
+
+        selection.Load(menu);
+
+        Expect(selection.SelectedMonitor?.MonitorDevicePath == PathA);
+        Expect(selection.CanApply);
+    }
+
+    public static void UnsafeMissingOrAmbiguousPrimaryMonitorIsNotPreselected()
+    {
+        var cases = new[]
+        {
+            new FakeTopology(Endpoint("", "Unsicher", 1), Endpoint(PathB, "Beta", 2)),
+            new FakeTopology(Endpoint(PathA, "Alpha", 1, isPrimary: false), Endpoint(PathB, "Beta", 2, isPrimary: false)),
+            new FakeTopology(Endpoint(PathA, "Alpha", 1), Endpoint(PathB, "Beta", 2, isPrimary: true)),
+            new FakeTopology(Endpoint("", "Unsicher", 1), Endpoint(PathB, "Beta", 2, isPrimary: true))
+        };
+
+        foreach (var topology in cases)
+        {
+            var menu = new ManualDisplaySwitcher(topology, new FakeDisplay(), () => ProfileMonitorStatus.Idle).RefreshMenu();
+            var selection = new ManualDisplaySelection();
+            selection.Load(menu);
+            Expect(selection.SelectedMonitor is null);
+            Expect(!selection.CanApply && selection.ApplyBlockReason!.Contains("Monitor"));
+        }
+    }
+
+    public static void MonitorSelectionDefaultsToItsCurrentResolution()
+    {
+        var topology = new FakeTopology(Endpoint(PathA, "Alpha", 1), Endpoint(PathB, "Beta", 2, current: Native(1280, 720, 60)));
+        var menu = new ManualDisplaySwitcher(topology, new FakeDisplay(), () => ProfileMonitorStatus.Idle).RefreshMenu();
+        var selection = new ManualDisplaySelection();
+        selection.Load(menu);
+
+        selection.SelectMonitor(1);
+
+        Expect(selection.SelectedResolution == new ManualResolution(1280, 720));
+        Expect(selection.SelectedMode is not null && selection.SelectedMode.Width == 1280 && selection.SelectedMode.Height == 720);
+
+        var unavailableCurrent = new FakeTopology(Endpoint(PathA, "Alpha", 1, current: Native(1024, 768, 60)));
+        selection.Load(new ManualDisplaySwitcher(unavailableCurrent, new FakeDisplay(), () => ProfileMonitorStatus.Idle).RefreshMenu());
+        Expect(selection.SelectedMonitor is not null && selection.SelectedResolution is null && selection.SelectedMode is null);
+    }
+
+    public static void ResolutionSelectionDefaultsToHighestFrequency()
+    {
+        var topology = new FakeTopology(Endpoint(PathA, "Alpha", 1));
+        topology.Modes[1] = [Native(1920, 1080, 60), Native(1920, 1080, 100), Native(1920, 1080, 144)];
+        var menu = new ManualDisplaySwitcher(topology, new FakeDisplay(), () => ProfileMonitorStatus.Idle).RefreshMenu();
+        var selection = new ManualDisplaySelection();
+
+        selection.Load(menu);
+
+        Expect(selection.SelectedMode?.Frequency == 144);
+        Expect(selection.CanApply);
+    }
+
+    public static void WindowSelectionTracksProfileBlockingWhileOpen()
+    {
+        var menu = new ManualDisplaySwitcher(new FakeTopology(Endpoint(PathA, "Alpha", 1)), new FakeDisplay(), () => ProfileMonitorStatus.Idle).RefreshMenu();
+        var selection = new ManualDisplaySelection();
+        selection.Load(menu);
+        selection.SelectMonitor(0);
+        selection.SelectResolution(0);
+        selection.SelectFrequency(0);
+        Expect(selection.CanApply);
+
+        selection.UpdateProfileBlockReason(ManualDisplaySwitcher.ProfileBlockReason(new ProfileMonitorStatus(ProfileMonitorState.Active, "aktiv")));
+        Expect(!selection.CanApply && selection.ApplyBlockReason!.Contains("Aktiv"));
+        selection.UpdateProfileBlockReason(null);
+        Expect(selection.CanApply);
+    }
+
+    public static void FreshTopologyClearsDisconnectedSelection()
+    {
+        var firstMenu = new ManualDisplaySwitcher(new FakeTopology(Endpoint(PathA, "Alpha", 1)), new FakeDisplay(), () => ProfileMonitorStatus.Idle).RefreshMenu();
+        var emptyMenu = new ManualDisplaySwitcher(new FakeTopology(), new FakeDisplay(), () => ProfileMonitorStatus.Idle).RefreshMenu();
+        var selection = new ManualDisplaySelection();
+        selection.Load(firstMenu);
+        selection.SelectMonitor(0);
+        selection.SelectResolution(0);
+        selection.SelectFrequency(0);
+        var previousMode = selection.SelectedMode;
+
+        selection.Load(emptyMenu, PathA, previousMode);
+
+        Expect(selection.SelectedMonitor is null && !selection.CanApply);
+        Expect(selection.ApplyBlockReason!.Contains("keinen aktiven Monitor"));
+    }
+
+    public static void RefreshCanRestoreOnlyAnExactExplicitSelection()
+    {
+        var topology = new FakeTopology(Endpoint(PathA, "Alpha", 1), Endpoint(PathB, "Beta", 2));
+        topology.Modes[2] = [Native(1920, 1080, 60), Native(1280, 720, 60), Native(1280, 720, 75)];
+        var menu = new ManualDisplaySwitcher(topology, new FakeDisplay(), () => ProfileMonitorStatus.Idle).RefreshMenu();
+        var selection = new ManualDisplaySelection();
+        var preferred = Mode(1280, 720, 60);
+
+        selection.Load(menu, PathB.ToLowerInvariant(), preferred);
+
+        Expect(selection.SelectedMonitor?.MonitorDevicePath == PathB);
+        Expect(selection.SelectedMode is not null && selection.SelectedMode.Width == 1280 && selection.SelectedMode.Height == 720 && selection.SelectedMode.Frequency == 60);
+        selection.Load(menu, PathB, Mode(1234, 567, 89));
+        Expect(selection.SelectedMonitor?.MonitorDevicePath == PathB);
+        Expect(selection.SelectedMode is not null && selection.SelectedMode.Width == 1920 && selection.SelectedMode.Height == 1080);
+        Expect(selection.CanApply);
+    }
+
+    private static DisplayEndpoint Endpoint(string path, string name, uint source, bool? isPrimary = null, EndpointDisplayMode? current = null) => new(
         new DisplayTargetIdentity(new DisplayAdapterId(1), source), new DisplaySourceIdentity(new DisplayAdapterId(1), source),
-        path, name, 0, 0, DisplayOutputTechnology.Hdmi, source, $@"\\.\DISPLAY{source}", source == 1,
-        new DisplayPoint((int)(source - 1) * 1920, 0), Native(1920, 1080, 60), false);
+        path, name, 0, 0, DisplayOutputTechnology.Hdmi, source, $@"\\.\DISPLAY{source}", isPrimary ?? source == 1,
+        new DisplayPoint((int)(source - 1) * 1920, 0), current ?? Native(1920, 1080, 60), false);
     private static EndpointDisplayMode Native(uint width, uint height, uint hz) => new(width, height, hz, 32, 0, DisplayOrientation.Default, 0);
     private static DisplayMode Mode(uint width, uint height, uint hz) => new() { Width = width, Height = height, Frequency = hz, Label = $"{width}x{height} @ {hz}Hz" };
     private static void Expect(bool condition) { if (!condition) throw new InvalidOperationException("Erwartung nicht erfüllt."); }

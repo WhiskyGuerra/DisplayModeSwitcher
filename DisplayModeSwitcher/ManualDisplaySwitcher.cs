@@ -1,7 +1,18 @@
 namespace DisplayModeSwitcher;
 
-public sealed record ManualMonitorMenu(string Label, string? MonitorDevicePath, bool Enabled, string? DisabledReason, IReadOnlyList<DisplayMode> Modes);
-public sealed record ManualDisplayMenuResult(bool Success, string? Error, IReadOnlyList<ManualMonitorMenu> Monitors);
+public sealed record ManualMonitorMenu(
+    string Label,
+    string? MonitorDevicePath,
+    bool IsPrimary,
+    bool Enabled,
+    string? DisabledReason,
+    DisplayMode? CurrentMode,
+    IReadOnlyList<DisplayMode> Modes);
+public sealed record ManualDisplayMenuResult(
+    bool Success,
+    string? Error,
+    string? ProfileBlockReason,
+    IReadOnlyList<ManualMonitorMenu> Monitors);
 public sealed record ManualDisplaySwitchResult(bool Success, string? Error);
 
 /// <summary>UI-unabhängige, ausschließlich explizit pfadgebundene manuelle Monitorwahl.</summary>
@@ -20,17 +31,19 @@ public sealed class ManualDisplaySwitcher
 
     public ManualDisplayMenuResult RefreshMenu()
     {
-        var blocked = ProfileBlockReason(_profileStatus());
+        var blocked = CurrentProfileBlockReason();
         DisplayReadResult<DisplayTopologySnapshot> result;
         try { result = _topology.GetSnapshot(); }
-        catch (Exception ex) { return new(false, $"Die Monitor-Topologie konnte nicht gelesen werden: {ex.Message}", []); }
-        if (!result.Success || result.Value is null) return new(false, result.Error?.Message ?? "Die Monitor-Topologie konnte nicht gelesen werden.", []);
+        catch (Exception ex) { return new(false, $"Die Monitor-Topologie konnte nicht gelesen werden: {ex.Message}", blocked, []); }
+        if (!result.Success || result.Value is null) return new(false, result.Error?.Message ?? "Die Monitor-Topologie konnte nicht gelesen werden.", blocked, []);
 
         var snapshot = result.Value;
         var monitors = snapshot.Endpoints.OrderBy(DisplayEndpointLabel.Format, StringComparer.CurrentCultureIgnoreCase)
-            .Select(endpoint => CreateMonitor(snapshot, endpoint, blocked)).ToArray();
-        return new(true, monitors.Length == 0 ? "Windows meldet derzeit keinen aktiven Monitor." : null, monitors);
+            .Select(endpoint => CreateMonitor(snapshot, endpoint)).ToArray();
+        return new(true, monitors.Length == 0 ? "Windows meldet derzeit keinen aktiven Monitor." : null, blocked, monitors);
     }
+
+    public string? CurrentProfileBlockReason() => ProfileBlockReason(_profileStatus());
 
     public ManualDisplaySwitchResult Switch(string monitorDevicePath, DisplayMode mode)
     {
@@ -55,15 +68,24 @@ public sealed class ManualDisplaySwitcher
         ? null
         : $"Manuelles Umschalten ist deaktiviert, solange die Profilüberwachung den Zustand „{DiagnosticReportFormatter.DisplayState(status.State)}“ hat.";
 
-    private ManualMonitorMenu CreateMonitor(DisplayTopologySnapshot snapshot, DisplayEndpoint endpoint, string? profileBlock)
+    private ManualMonitorMenu CreateMonitor(DisplayTopologySnapshot snapshot, DisplayEndpoint endpoint)
     {
-        var reason = profileBlock ?? EndpointBlockReason(snapshot, endpoint);
-        if (reason is not null) return new(DisplayEndpointLabel.Format(endpoint), endpoint.IsPersistable ? endpoint.MonitorDevicePath : null, false, reason, []);
+        var currentMode = ToDisplayMode(endpoint.CurrentMode);
+        var reason = EndpointBlockReason(snapshot, endpoint);
+        if (reason is not null) return new(DisplayEndpointLabel.Format(endpoint), endpoint.IsPersistable ? endpoint.MonitorDevicePath : null, endpoint.IsPrimary, false, reason, currentMode, []);
         var modes = DisplayModeCatalog.Read(_topology, endpoint);
-        if (!modes.Success) return new(DisplayEndpointLabel.Format(endpoint), endpoint.MonitorDevicePath, false, modes.Error, []);
-        return new(DisplayEndpointLabel.Format(endpoint), endpoint.MonitorDevicePath, modes.Modes.Count > 0,
-            modes.Modes.Count == 0 ? "Für diesen Monitor wurden keine sicheren Modi gefunden." : null, modes.Modes);
+        if (!modes.Success) return new(DisplayEndpointLabel.Format(endpoint), endpoint.MonitorDevicePath, endpoint.IsPrimary, false, modes.Error, currentMode, []);
+        return new(DisplayEndpointLabel.Format(endpoint), endpoint.MonitorDevicePath, endpoint.IsPrimary, modes.Modes.Count > 0,
+            modes.Modes.Count == 0 ? "Für diesen Monitor wurden keine sicheren Modi gefunden." : null, currentMode, modes.Modes);
     }
+
+    private static DisplayMode? ToDisplayMode(EndpointDisplayMode? mode) => mode is null ? null : new DisplayMode
+    {
+        Width = mode.Width,
+        Height = mode.Height,
+        Frequency = mode.Frequency,
+        Label = $"{mode.Width}x{mode.Height} @ {mode.Frequency}Hz"
+    };
 
     private static string? EndpointBlockReason(DisplayTopologySnapshot snapshot, DisplayEndpoint endpoint)
     {
