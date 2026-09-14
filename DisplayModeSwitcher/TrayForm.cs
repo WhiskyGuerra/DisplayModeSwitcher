@@ -15,7 +15,9 @@ namespace DisplayModeSwitcher
         private readonly IDisplayTopologyService _topology;
         private readonly ManualDisplaySwitcher _manualDisplay;
         private readonly HttpClient _updateHttpClient;
+        private readonly HttpClient _updateDownloadHttpClient;
         private readonly IUpdateChecker _updateChecker;
+        private readonly IUpdatePackageStager _updateStager;
         private readonly Icon _applicationIcon;
         private readonly NotifyIcon trayIcon;
         private readonly ContextMenuStrip contextMenu;
@@ -35,6 +37,10 @@ namespace DisplayModeSwitcher
                 _profileManager.RecordDiagnosticEvent);
             _updateHttpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
             _updateChecker = new GitHubReleaseUpdateChecker(_updateHttpClient);
+            _updateDownloadHttpClient = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
+            _updateStager = new UpdatePackageStager(
+                _updateDownloadHttpClient,
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DisplayModeSwitcher", "Updates"));
             _applicationIcon = ApplicationIconProvider.Create();
             contextMenu = new ContextMenuStrip();
 
@@ -176,11 +182,33 @@ namespace DisplayModeSwitcher
                     return;
                 }
 
-                var open = MessageBox.Show(this,
-                    $"Version {result.Release.Version} ist verfügbar.\n\nDer automatische Download wird in einem folgenden Arbeitspaket ergänzt. Soll die sichere GitHub-Release-Seite geöffnet werden?",
+                if (result.Release.Package is null)
+                {
+                    var open = MessageBox.Show(this,
+                        $"Version {result.Release.Version} ist verfügbar, enthält aber kein verifizierbares Update-Paket.\n\n{result.Release.PackageIssue}\n\nSoll die sichere GitHub-Release-Seite geöffnet werden?",
+                        "Update ohne Paket", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+                    if (open == DialogResult.Yes)
+                        Process.Start(new ProcessStartInfo(result.Release.ReleasePage.AbsoluteUri) { UseShellExecute = true });
+                    return;
+                }
+
+                var sizeMb = result.Release.Package.ArchiveSize / 1024d / 1024d;
+                var download = MessageBox.Show(this,
+                    $"Version {result.Release.Version} ist verfügbar ({sizeMb:0.0} MB).\n\nDas Paket und seine SHA-256-Prüfsumme jetzt herunterladen und sicher prüfen? Die laufende Installation wird dabei noch nicht verändert.",
                     "Update verfügbar", MessageBoxButtons.YesNo, MessageBoxIcon.Information);
-                if (open == DialogResult.Yes)
-                    Process.Start(new ProcessStartInfo(result.Release.ReleasePage.AbsoluteUri) { UseShellExecute = true });
+                if (download != DialogResult.Yes) return;
+
+                item.Text = "Update wird geprüft...";
+                var staged = await _updateStager.StageAsync(result.Release.Package, result.Release.Version);
+                if (!staged.Success)
+                {
+                    MessageBox.Show(this, staged.Error ?? "Das Update konnte nicht sicher bereitgestellt werden.", "Updateprüfung", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
+                MessageBox.Show(this,
+                    $"Version {result.Release.Version} wurde vollständig heruntergeladen und per SHA-256 geprüft.\n\nDie Installation wurde nicht verändert. Der eigentliche Austausch folgt im nächsten Arbeitspaket.",
+                    "Update sicher bereitgestellt", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
             catch (Exception ex)
             {
@@ -207,6 +235,7 @@ namespace DisplayModeSwitcher
             trayIcon.Dispose();
             _applicationIcon.Dispose();
             _updateHttpClient.Dispose();
+            _updateDownloadHttpClient.Dispose();
             contextMenu.Dispose();
             base.OnFormClosed(e);
         }

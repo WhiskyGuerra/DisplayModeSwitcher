@@ -60,6 +60,32 @@ public static class UpdateCheckerTests
         Expect(result.State == UpdateCheckState.NoPublishedRelease);
     }
 
+    public static void AcceptsOnlyTheExactVerifiedPackagePair()
+    {
+        const string json = """
+        [
+          {
+            "tag_name": "v1.2.0", "name": "Release", "html_url": "https://github.com/WhiskyGuerra/DisplayModeSwitcher/releases/tag/v1.2.0",
+            "body": null, "draft": false, "prerelease": false,
+            "assets": [
+              { "name": "DisplayModeSwitcher-win-x64.zip", "browser_download_url": "https://github.com/WhiskyGuerra/DisplayModeSwitcher/releases/download/v1.2.0/DisplayModeSwitcher-win-x64.zip", "size": 12345 },
+              { "name": "DisplayModeSwitcher-win-x64.zip.sha256", "browser_download_url": "https://github.com/WhiskyGuerra/DisplayModeSwitcher/releases/download/v1.2.0/DisplayModeSwitcher-win-x64.zip.sha256", "size": 99 }
+            ]
+          }
+        ]
+        """;
+        using var http = new HttpClient(new FakeHandler(HttpStatusCode.OK, json));
+        var result = new GitHubReleaseUpdateChecker(http).CheckAsync(new Version(1, 0)).GetAwaiter().GetResult();
+        Expect(result.Release?.Package is { ArchiveSize: 12345, ChecksumSize: 99 } && result.Release.PackageIssue is null);
+
+        const string missingAssets = """
+        [{ "tag_name": "v1.2.0", "name": "Release", "html_url": "https://github.com/WhiskyGuerra/DisplayModeSwitcher/releases/tag/v1.2.0", "body": null, "draft": false, "prerelease": false, "assets": [] }]
+        """;
+        using var incompleteHttp = new HttpClient(new FakeHandler(HttpStatusCode.OK, missingAssets));
+        var incomplete = new GitHubReleaseUpdateChecker(incompleteHttp).CheckAsync(new Version(1, 0)).GetAwaiter().GetResult();
+        Expect(incomplete.State == UpdateCheckState.UpdateAvailable && incomplete.Release?.Package is null && incomplete.Release?.PackageIssue is not null);
+    }
+
     private static void Expect(bool condition)
     {
         if (!condition) throw new InvalidOperationException("Erwartung nicht erfüllt.");

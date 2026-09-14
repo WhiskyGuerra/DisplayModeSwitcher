@@ -23,7 +23,7 @@ Die funktionale Basis ist abgeschlossen:
 - Autostart, Diagnosebericht, Profilspeicherung und V1-zu-V2-Migration sind
   vorhanden.
 
-Letzter automatischer Stand: Release-Build erfolgreich, **146/146 Tests**.
+Letzter automatischer Stand: Release-Build erfolgreich, **152/152 Tests**.
 
 Manuell bestätigt:
 
@@ -190,11 +190,19 @@ In Arbeit. Das erste sichere Teilpaket – eine ausschließlich manuell
 ausgelöste Metadatenprüfung – ist implementiert, automatisch geprüft und
 manuell mit `v1.0.1` abgenommen. Sie
 unterscheidet fehlende Releases, aktuellen Stand, verfügbare Version und
-API-Fehler. Entwürfe, Vorab-Releases und ungültige Tags werden ignoriert; es
-findet noch kein Download oder Dateiaustausch statt.
+API-Fehler. Entwürfe, Vorab-Releases und ungültige Tags werden ignoriert; in
+diesem ersten Teilpaket fand noch kein Download oder Dateiaustausch statt.
 
 Die Release-Quelle ist jetzt öffentlich und ohne Token erreichbar. Persönliche
 GitHub-Tokens werden weder eingebettet noch lokal vom Tool angefordert.
+
+Das zweite Teilpaket ist implementiert und automatisch geprüft: Nur das exakt
+benannte `win-x64`-ZIP samt SHA-256-Datei wird nach einer weiteren Bestätigung
+geladen. Host- und Größenprüfung, isoliertes Staging unter `%LocalAppData%`,
+Vergleich mit der veröffentlichten Assetgröße, Hashvergleich und das Entfernen
+abgelehnter Downloads sind vorhanden. Es wird noch nichts entpackt oder in der
+Installation ersetzt. Die manuelle Abnahme wartet auf ein Release mit diesem
+Assetpaar.
 
 Nicht als direktes `git pull`, sondern als kontrollierter Binär-Updatepfad:
 

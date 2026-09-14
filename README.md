@@ -139,11 +139,16 @@ kein persönlicher GitHub-Token in der Anwendung oder ihren Einstellungen
 gespeichert; für automatische Updates muss die Release-Quelle öffentlich
 abrufbar sein.
 
-Der aktuelle Zwischenstand lädt noch keine Datei herunter und verändert die
-Installation nicht. Bei einer gefundenen Version kann lediglich die geprüfte
-GitHub-Release-Seite nach ausdrücklicher Bestätigung geöffnet werden. Der
-signaturähnliche SHA-256-Prüf- und Installationspfad folgt als separates
-Arbeitspaket.
+Ein Release gilt nur mit genau einem `DisplayModeSwitcher-win-x64.zip` und
+einer `DisplayModeSwitcher-win-x64.zip.sha256` als verifizierbar. Fehlt dieses
+Paar, wird lediglich angeboten, die geprüfte GitHub-Release-Seite zu öffnen.
+Ist es vollständig, fragt das Tool vor dem Download ausdrücklich nach. Es
+akzeptiert nur HTTPS-Adressen der erwarteten GitHub-Hosts, begrenzt ZIP und
+Prüfsummendatei in ihrer Größe und speichert sie zunächst unter
+`%LocalAppData%\DisplayModeSwitcher\Updates` in einem neuen Staging-Ordner.
+Eine abweichende oder ungültige SHA-256-Prüfsumme verwirft das unvollständige
+Staging. Der aktuelle Zwischenstand entpackt nichts und verändert weder die
+laufende Installation noch Profile oder Autostart.
 
 ### Autostart mit Windows
 
