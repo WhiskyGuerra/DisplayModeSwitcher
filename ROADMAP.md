@@ -235,7 +235,8 @@ Nicht als direktes `git pull`, sondern als kontrollierter Binär-Updatepfad:
 
 ### 7. Release-Vorbereitung
 
-- Versionierung für das erste Pre-Release festlegen.
+- Versionierung für das erste installierbare Release festlegen. `v1.0.2` ist
+  für die Ende-zu-Ende-Abnahme des Self-Updaters vorgesehen.
 - Frameworkabhängiges `win-x64`-Bundle erzeugen; .NET 8 darf vorausgesetzt
   werden.
 - App-, Datei- und Assembly-Version konsistent setzen.
