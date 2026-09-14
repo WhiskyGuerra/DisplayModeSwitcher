@@ -207,8 +207,9 @@ Das dritte Teilpaket ist ebenfalls implementiert und automatisch geprüft:
 Pfadsicheres Entpacken, Ausschluss von Profildateien und Verweisen, Prüfung der
 vollständigen App-Dateien, zweite ausdrückliche Installationsbestätigung und
 Abgleich der Paketversion mit dem Release-Tag sowie Sperre bei aktivem Profil.
-Eine aus dem bestehenden Build kopierte separate
-Updater-Instanz wartet auf das saubere Programmende, sichert überschriebene
+Eine isolierte Kopie aus dem bereits geprüften neuen Payload arbeitet als
+separate Updater-Instanz, sodass Releases auch den Updater selbst korrigieren
+können. Sie wartet auf das saubere Programmende, sichert überschriebene
 Dateien, tauscht ausschließlich den geprüften Payload aus und startet die neue
 Version. Austausch- und Neustartfehler lösen einen Rollback samt sichtbarer
 Fehlermeldung aus. Profile und der stabile Installationspfad bleiben unberührt.
@@ -236,8 +237,10 @@ Nicht als direktes `git pull`, sondern als kontrollierter Binär-Updatepfad:
 ### 7. Release-Vorbereitung
 
 - Versionierung für das erste installierbare Release festlegen. `v1.0.2`
-  deckte beim Ende-zu-Ende-Test eine kurzlebige Windows-Sperre der beendeten
-  EXE auf; `v1.0.3` ergänzt begrenzte Wiederholungen und präzise Dateifehler.
+  deckte beim Ende-zu-Ende-Test eine Windows-Dateisperre auf. `v1.0.3`
+  enthielt den Fix bereits im Payload, startete beim Update von `v1.0.1` aber
+  weiterhin dessen alten Runner. Ein lokaler `v1.0.4`-Bootstrap und das
+  Release `v1.0.5` prüfen den korrigierten, selbstaktualisierbaren Runnerpfad.
 - Frameworkabhängiges `win-x64`-Bundle erzeugen; .NET 8 darf vorausgesetzt
   werden.
 - App-, Datei- und Assembly-Version konsistent setzen.

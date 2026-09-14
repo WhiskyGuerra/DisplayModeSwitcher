@@ -30,7 +30,7 @@ internal static class UpdateInstallerTests
             True(result.Update is not null);
             True(File.Exists(result.Update!.RunnerExecutable));
             True(File.Exists(result.Update.RequestPath));
-            Equal("old-DisplayModeSwitcher.exe", File.ReadAllText(result.Update.RunnerExecutable));
+            Equal("new-DisplayModeSwitcher.exe", File.ReadAllText(result.Update.RunnerExecutable));
             Equal("new-DisplayModeSwitcher.exe", File.ReadAllText(Path.Combine(staging, "payload", RequiredFiles[0])));
             Equal("old-DisplayModeSwitcher.exe", File.ReadAllText(Path.Combine(install, RequiredFiles[0])));
         });

@@ -55,11 +55,12 @@ public static class UpdateArchivePreparer
                     throw new InvalidDataException($"Im Update-Paket fehlt '{required}'.");
             ValidateApplicationIdentity(Path.Combine(payloadDirectory, "DisplayModeSwitcher.dll"), expectedVersion);
 
+            // Der Runner stammt aus dem bereits hash- und versionsgeprüften Payload.
+            // Dadurch können neue Releases auch Fehler im Updater selbst beheben.
             Directory.CreateDirectory(runnerDirectory);
             foreach (var runnerFile in RequiredRootFiles)
             {
-                var source = Path.Combine(installDirectory, runnerFile);
-                if (!File.Exists(source)) throw new FileNotFoundException($"Die lokale Updater-Komponente '{runnerFile}' fehlt.", source);
+                var source = Path.Combine(payloadDirectory, runnerFile);
                 File.Copy(source, Path.Combine(runnerDirectory, runnerFile), overwrite: false);
             }
 

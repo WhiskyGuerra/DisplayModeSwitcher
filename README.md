@@ -155,10 +155,11 @@ GitHub-Release-Tags passen.
 
 Vor der Installation folgt eine zweite, standardmäßig verneinte Bestätigung.
 Bei einem aktiven oder noch wiederherzustellenden Profil bleibt die
-Installation gesperrt. Nach Zustimmung startet eine Kopie der vorhandenen
-Anwendung als separater Updater, wartet auf das saubere Ende des Tray-Tools,
-sichert jede zu ersetzende Datei, übernimmt ausschließlich Dateien aus dem
-geprüften Paket und startet die neue Version. Scheitert Austausch oder
+Installation gesperrt. Nach Zustimmung startet eine isolierte Kopie aus dem
+bereits hash- und versionsgeprüften neuen Paket als separater Updater. Dadurch
+können neue Releases auch den Updater selbst korrigieren. Der Runner wartet auf
+das saubere Ende des Tray-Tools, sichert jede zu ersetzende Datei, übernimmt
+ausschließlich Dateien aus dem geprüften Paket und startet die neue Version. Scheitert Austausch oder
 Neustart, werden bereits vorgenommene Änderungen zurückgerollt und der
 Rollback-Status sichtbar gemeldet. Profile unter `%LocalAppData%` und der
 stabile EXE-Pfad des Autostarts werden dabei nicht verschoben oder ersetzt.
