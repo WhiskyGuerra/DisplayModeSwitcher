@@ -3,9 +3,11 @@
 Der aktuelle Entwicklungsstand und die nächsten Arbeitspakete stehen in der
 [Roadmap](ROADMAP.md).
 
-DisplayModeSwitcher ist ein Windows-Tool im Infobereich, das den Anzeigemodus
-des Primärmonitors automatisch an ein laufendes Spiel oder Programm anpasst.
-Beim Beenden des Prozesses wird der zuvor aktive Modus wiederhergestellt.
+DisplayModeSwitcher ist ein Windows-Tool im Infobereich, das gezielt die
+Anzeigemodi ausgewählter Monitore an ein laufendes Spiel oder Programm anpasst.
+Ein Profil kann ein oder mehrere explizite Monitorziele enthalten. Nicht
+ausgewählte Monitore bleiben unangetastet; beim Beenden des Prozesses werden
+die zuvor aktiven Modi der vom Tool geänderten Ziele wiederhergestellt.
 
 ## Voraussetzungen
 
@@ -190,6 +192,10 @@ Anwendung ist für Windows bestimmt.
 
 ## Manuelle Abnahme
 
+Die detaillierten Mehrmonitor- und Geräteszenarien stehen in der
+[Hardware-Testmatrix](HARDWARE-TESTMATRIX.md). Dort werden nur tatsächlich
+durchgeführte Tests als bestanden markiert.
+
 1. Release-Build starten und die erzeugte Anwendung ausführen.
 2. Im Tray **Autostart mit Windows** aktivieren, ab- und wieder anmelden und
    prüfen, dass das Tool ohne Dialog im Infobereich erscheint.
@@ -199,9 +205,9 @@ Anwendung ist für Windows bestimmt.
    vorauswählt. Den dynamischen Primärmonitor und – sofern vorhanden – einen
    spezifischen zweiten Monitor jeweils mit passendem Modus hinzufügen; Profil
    speichern, erneut öffnen und Zielbeschriftungen und Modi prüfen.
-5. Ein Profil für die tatsächliche `helldivers2.exe` (vorzugsweise mit vollem
-   EXE-Pfad) anlegen, Helldivers 2 starten und den Wechsel an allen gewählten
+5. Ein Profil für eine tatsächlich installierte Testanwendung mit vollem
+   EXE-Pfad anlegen, die Anwendung starten und den Wechsel an allen gewählten
    Monitoren beobachten.
-6. Helldivers 2 beenden und prüfen, dass die ursprünglichen Modi
+6. Die Testanwendung beenden und prüfen, dass die ursprünglichen Modi
    wiederhergestellt werden. Diese Abnahme muss auf dem Zielsystem erfolgen; ein
-   realer Spieltest ist nicht Bestandteil des automatisierten Tests.
+   realer Anwendungstest ist nicht Bestandteil des automatisierten Tests.

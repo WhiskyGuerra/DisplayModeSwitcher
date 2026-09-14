@@ -34,9 +34,8 @@ Manuell bestätigt:
 - Das manuelle Tray-Schalten wurde mit zwei Monitoren geprüft. Ausschließlich
   der jeweils gewählte Monitor änderte seinen Modus.
 
-Der Punkt-2-Arbeitsstand ist im Commit `2e4e3de` festgehalten. Vor der nächsten
-Arbeitssitzung ist nur zu prüfen, ob dieser Commit bereits zum Remote gepusht
-wurde.
+Das Icon-Arbeitspaket ist im Commit `0ed8bb8` festgehalten und zum Remote
+gepusht.
 
 ## Reihenfolge für die nächsten Arbeitspakete
 
@@ -133,6 +132,12 @@ Laufzeit keine separate Icon-Datei erforderlich ist.
 
 ### 4. Mehrmonitor-Hardwareabnahme abschließen
 
+In Arbeit. Die reproduzierbare Abnahme und ihre tatsächlich bestätigten
+Ergebnisse werden in der [Hardware-Testmatrix](HARDWARE-TESTMATRIX.md)
+festgehalten. Das manuelle gezielte Umschalten wurde auf dem ersten Rechner
+bereits mit zwei Monitoren bestätigt; Profil-, Trennungs- und
+Primärmonitor-Szenarien sowie der zweite Rechner sind noch offen.
+
 Erster Rechner mit C49HG9x und VC279:
 
 - Ein einzelnes spezifisches Ziel.
@@ -208,10 +213,10 @@ Nicht als direktes `git pull`, sondern als kontrollierter Binär-Updatepfad:
 
 ## Einstieg in die nächste Arbeitssitzung
 
-1. Die offene UI-Abnahme von Arbeitspaket 2 bei 100 % und erhöhter
-   Windows-Skalierung durchführen und das Ergebnis dokumentieren.
-2. Dabei neues Profil, bestehendes Profil, mehrere Ziele, fehlenden Monitor und
-   lange Namen prüfen; Speicher-, Start- und Displayverhalten müssen unverändert
-   bleiben.
-3. Nach erfolgreicher Abnahme den Arbeitsstand committen und pushen.
-4. Anschließend mit Arbeitspaket **3 – Eigenes Icon-Set** beginnen.
+1. Die offenen Szenarien des ersten Rechners anhand der
+   [Hardware-Testmatrix](HARDWARE-TESTMATRIX.md) durchführen.
+2. Danach die Neo-G9-Abnahme auf dem zweiten Rechner ausführen.
+3. Abweichungen immer zusammen mit App-Version beziehungsweise Commit und dem
+   Diagnosebericht dokumentieren.
+4. Nach abgeschlossener Hardwareabnahme mit Arbeitspaket **5 – Diagnose und
+   Dokumentation abrunden** fortfahren.
