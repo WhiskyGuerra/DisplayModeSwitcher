@@ -23,7 +23,7 @@ Die funktionale Basis ist abgeschlossen:
 - Autostart, Diagnosebericht, Profilspeicherung und V1-zu-V2-Migration sind
   vorhanden.
 
-Letzter automatischer Stand: Release-Build erfolgreich, **152/152 Tests**.
+Letzter automatischer Stand: Release-Build erfolgreich, **160/160 Tests**.
 
 Manuell bestätigt:
 
@@ -186,7 +186,8 @@ Mehrmonitor-Stand.
 
 ### 6. Updatefunktion über GitHub Releases
 
-In Arbeit. Das erste sichere Teilpaket – eine ausschließlich manuell
+Implementiert; die reale Ende-zu-Ende-Abnahme mit einem neuen Release-Paket
+steht noch aus. Das erste sichere Teilpaket – eine ausschließlich manuell
 ausgelöste Metadatenprüfung – ist implementiert, automatisch geprüft und
 manuell mit `v1.0.1` abgenommen. Sie
 unterscheidet fehlende Releases, aktuellen Stand, verfügbare Version und
@@ -200,8 +201,18 @@ Das zweite Teilpaket ist implementiert und automatisch geprüft: Nur das exakt
 benannte `win-x64`-ZIP samt SHA-256-Datei wird nach einer weiteren Bestätigung
 geladen. Host- und Größenprüfung, isoliertes Staging unter `%LocalAppData%`,
 Vergleich mit der veröffentlichten Assetgröße, Hashvergleich und das Entfernen
-abgelehnter Downloads sind vorhanden. Es wird noch nichts entpackt oder in der
-Installation ersetzt. Die manuelle Abnahme wartet auf ein Release mit diesem
+abgelehnter Downloads sind vorhanden.
+
+Das dritte Teilpaket ist ebenfalls implementiert und automatisch geprüft:
+Pfadsicheres Entpacken, Ausschluss von Profildateien und Verweisen, Prüfung der
+vollständigen App-Dateien, zweite ausdrückliche Installationsbestätigung und
+Abgleich der Paketversion mit dem Release-Tag sowie Sperre bei aktivem Profil.
+Eine aus dem bestehenden Build kopierte separate
+Updater-Instanz wartet auf das saubere Programmende, sichert überschriebene
+Dateien, tauscht ausschließlich den geprüften Payload aus und startet die neue
+Version. Austausch- und Neustartfehler lösen einen Rollback samt sichtbarer
+Fehlermeldung aus. Profile und der stabile Installationspfad bleiben unberührt.
+Die manuelle Ende-zu-Ende-Abnahme wartet auf ein neueres Release mit dem
 Assetpaar.
 
 Nicht als direktes `git pull`, sondern als kontrollierter Binär-Updatepfad:
@@ -214,8 +225,9 @@ Nicht als direktes `git pull`, sondern als kontrollierter Binär-Updatepfad:
 - Download zunächst in ein Staging-Verzeichnis schreiben und vollständig
   prüfen.
 - Einen kleinen separaten Updater verwenden, der das laufende Tool beendet,
-  Dateien austauscht und die neue Version startet.
+  Dateien austauscht und die neue Version startet. *(implementiert)*
 - Bei einem fehlgeschlagenen Austausch auf die vorige Version zurückrollen.
+  *(implementiert und automatisch geprüft)*
 - Profile unter `%LocalAppData%` und den stabilen Installations-/Autostart-Pfad
   unverändert erhalten.
 - Keine unbeaufsichtigten Updates; Prüfung und Installation müssen getrennt
@@ -249,6 +261,9 @@ Nicht als direktes `git pull`, sondern als kontrollierter Binär-Updatepfad:
 2. Danach die Neo-G9-Abnahme auf dem zweiten Rechner ausführen.
 3. Abweichungen immer zusammen mit App-Version beziehungsweise Commit und dem
    Diagnosebericht dokumentieren.
-4. Die Hardwareabnahme kann unabhängig von der Entwicklung fortgeführt werden;
-   der nächste Implementierungsschritt ist Arbeitspaket **6 – Updatefunktion
-   über GitHub Releases**.
+4. Die Hardwareabnahme kann unabhängig von der Entwicklung fortgeführt werden.
+   Als nächster Schritt folgt die **Ende-zu-Ende-Abnahme von Arbeitspaket 6**:
+   Quelle committen und pushen, ein höher versioniertes frameworkabhängiges
+   `win-x64`-Bundle samt SHA-256-Datei veröffentlichen und das Update aus einem
+   älteren Testbuild durchführen.
+5. Danach beginnt Arbeitspaket **7 – Release-Vorbereitung**.

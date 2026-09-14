@@ -9,8 +9,11 @@ namespace DisplayModeSwitcher
     internal static class Program
     {
         [STAThread]
-        static void Main()
+        static void Main(string[] args)
         {
+            if (UpdateInstallerProcess.TryRun(args))
+                return;
+
             using var windowsIdentity = WindowsIdentity.GetCurrent();
             var userIdentity = windowsIdentity.User?.Value ?? Environment.UserName;
             using var instanceMutex = new Mutex(true, $@"Local\DisplayModeSwitcher-{userIdentity}", out var isFirstInstance);

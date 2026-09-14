@@ -206,9 +206,46 @@ namespace DisplayModeSwitcher
                     return;
                 }
 
-                MessageBox.Show(this,
-                    $"Version {result.Release.Version} wurde vollständig heruntergeladen und per SHA-256 geprüft.\n\nDie Installation wurde nicht verändert. Der eigentliche Austausch folgt im nächsten Arbeitspaket.",
-                    "Update sicher bereitgestellt", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                var prepared = UpdateArchivePreparer.Prepare(
+                    staged.ArchivePath!, staged.StagingDirectory!, Application.ExecutablePath,
+                    Environment.ProcessId, result.Release.Version);
+                if (!prepared.Success || prepared.Update is null)
+                {
+                    MessageBox.Show(this, prepared.Error ?? "Das geprüfte Update-Paket konnte nicht sicher vorbereitet werden.",
+                        "Update nicht installierbar", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
+                if (_profileManager.Status.State != ProfileMonitorState.Idle)
+                {
+                    MessageBox.Show(this,
+                        "Das Update ist geprüft und vorbereitet, kann aber nicht installiert werden, solange ein Profil aktiv ist oder wiederhergestellt wird.\n\nBitte die Profilanwendung beenden und die Updateprüfung erneut starten.",
+                        "Update wartet", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+
+                var install = MessageBox.Show(this,
+                    $"Version {result.Release.Version} wurde vollständig heruntergeladen, per SHA-256 geprüft und sicher entpackt.\n\nJetzt installieren? Display Mode Switcher wird beendet, mit Backup aktualisiert und anschließend neu gestartet. Profile und Autostart-Pfad bleiben erhalten.",
+                    "Update installieren", MessageBoxButtons.YesNo, MessageBoxIcon.Question,
+                    MessageBoxDefaultButton.Button2);
+                if (install != DialogResult.Yes) return;
+
+                if (_profileManager.Status.State != ProfileMonitorState.Idle)
+                {
+                    MessageBox.Show(this,
+                        "Inzwischen wurde ein Profil aktiv. Die Installation wurde zur Sicherheit nicht gestartet.",
+                        "Update wartet", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+
+                if (!UpdateInstallerProcess.Launch(prepared.Update))
+                {
+                    MessageBox.Show(this, "Der separate Updater konnte nicht gestartet werden. Die laufende Installation blieb unverändert.",
+                        "Update fehlgeschlagen", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
+                Application.Exit();
             }
             catch (Exception ex)
             {
@@ -216,8 +253,11 @@ namespace DisplayModeSwitcher
             }
             finally
             {
-                item.Text = "Auf Updates prüfen...";
-                item.Enabled = true;
+                if (!IsDisposed && !Disposing)
+                {
+                    item.Text = "Auf Updates prüfen...";
+                    item.Enabled = true;
+                }
             }
         }
 

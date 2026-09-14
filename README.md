@@ -147,8 +147,27 @@ akzeptiert nur HTTPS-Adressen der erwarteten GitHub-Hosts, begrenzt ZIP und
 Prüfsummendatei in ihrer Größe und speichert sie zunächst unter
 `%LocalAppData%\DisplayModeSwitcher\Updates` in einem neuen Staging-Ordner.
 Eine abweichende oder ungültige SHA-256-Prüfsumme verwirft das unvollständige
-Staging. Der aktuelle Zwischenstand entpackt nichts und verändert weder die
-laufende Installation noch Profile oder Autostart.
+Staging. Nach erfolgreicher Prüfung wird das ZIP pfadsicher in einem isolierten
+Unterordner entpackt. Symbolische Links, Pfade außerhalb des Pakets,
+Profildateien und unvollständige Anwendungspakete werden abgelehnt.
+Zusätzlich muss die Assembly-Version im Paket exakt zur Version des
+GitHub-Release-Tags passen.
+
+Vor der Installation folgt eine zweite, standardmäßig verneinte Bestätigung.
+Bei einem aktiven oder noch wiederherzustellenden Profil bleibt die
+Installation gesperrt. Nach Zustimmung startet eine Kopie der vorhandenen
+Anwendung als separater Updater, wartet auf das saubere Ende des Tray-Tools,
+sichert jede zu ersetzende Datei, übernimmt ausschließlich Dateien aus dem
+geprüften Paket und startet die neue Version. Scheitert Austausch oder
+Neustart, werden bereits vorgenommene Änderungen zurückgerollt und der
+Rollback-Status sichtbar gemeldet. Profile unter `%LocalAppData%` und der
+stabile EXE-Pfad des Autostarts werden dabei nicht verschoben oder ersetzt.
+
+Updates bleiben vollständig manuell: Es gibt weder eine Prüfung beim Start
+noch einen unbeaufsichtigten Download oder eine unbeaufsichtigte Installation.
+Für ein installierbares Release müssen ZIP und SHA-256-Datei nach dem in
+[Release-Vorbereitung](ROADMAP.md#7-release-vorbereitung) beschriebenen Schema
+veröffentlicht sein.
 
 ### Autostart mit Windows
 
