@@ -186,8 +186,7 @@ Mehrmonitor-Stand.
 
 ### 6. Updatefunktion über GitHub Releases
 
-Implementiert; die reale Ende-zu-Ende-Abnahme mit einem neuen Release-Paket
-steht noch aus. Das erste sichere Teilpaket – eine ausschließlich manuell
+Abgeschlossen und real Ende-zu-Ende abgenommen. Das erste sichere Teilpaket – eine ausschließlich manuell
 ausgelöste Metadatenprüfung – ist implementiert, automatisch geprüft und
 manuell mit `v1.0.1` abgenommen. Sie
 unterscheidet fehlende Releases, aktuellen Stand, verfügbare Version und
@@ -213,8 +212,11 @@ können. Sie wartet auf das saubere Programmende, sichert überschriebene
 Dateien, tauscht ausschließlich den geprüften Payload aus und startet die neue
 Version. Austausch- und Neustartfehler lösen einen Rollback samt sichtbarer
 Fehlermeldung aus. Profile und der stabile Installationspfad bleiben unberührt.
-Die manuelle Ende-zu-Ende-Abnahme wartet auf ein neueres Release mit dem
-Assetpaar.
+Die manuelle Ende-zu-Ende-Abnahme war mit dem lokalen `v1.0.4`-Bootstrap und
+dem öffentlichen Release `v1.0.5` erfolgreich: Download, Größen- und
+Hashprüfung, versionsgeprüfter neuer Runner, Backup, Dateiaustausch und
+automatischer Neustart liefen durch. `install-result.json` meldete Erfolg und
+die gestartete Installation wurde als Assembly-Version `1.0.5.0` verifiziert.
 
 Nicht als direktes `git pull`, sondern als kontrollierter Binär-Updatepfad:
 
@@ -236,16 +238,19 @@ Nicht als direktes `git pull`, sondern als kontrollierter Binär-Updatepfad:
 
 ### 7. Release-Vorbereitung
 
-- Versionierung für das erste installierbare Release festlegen. `v1.0.2`
+- Versionierung für das erste installierbare Release festlegen. *(erledigt)*
+  `v1.0.2`
   deckte beim Ende-zu-Ende-Test eine Windows-Dateisperre auf. `v1.0.3`
   enthielt den Fix bereits im Payload, startete beim Update von `v1.0.1` aber
   weiterhin dessen alten Runner. Ein lokaler `v1.0.4`-Bootstrap und das
-  Release `v1.0.5` prüfen den korrigierten, selbstaktualisierbaren Runnerpfad.
+  Release `v1.0.5` bestätigten den korrigierten, selbstaktualisierbaren
+  Runnerpfad erfolgreich.
 - Frameworkabhängiges `win-x64`-Bundle erzeugen; .NET 8 darf vorausgesetzt
-  werden.
-- App-, Datei- und Assembly-Version konsistent setzen.
+  werden. *(für `v1.0.5` erledigt)*
+- App-, Datei- und Assembly-Version konsistent setzen. *(erledigt)*
 - Release Notes mit Funktionen, bekannten Grenzen und Testmatrix erstellen.
-- Clean Release-Build und vollständigen Testlauf ausführen.
+  *(für `v1.0.5` erledigt)*
+- Clean Release-Build und vollständigen Testlauf ausführen. *(161/161)*
 - Bundle auf einem zweiten Rechner entpacken und ohne Entwicklungsumgebung
   starten.
 - Autostart mit dem tatsächlich ausgelieferten EXE-Pfad erneut prüfen.
@@ -266,9 +271,7 @@ Nicht als direktes `git pull`, sondern als kontrollierter Binär-Updatepfad:
 2. Danach die Neo-G9-Abnahme auf dem zweiten Rechner ausführen.
 3. Abweichungen immer zusammen mit App-Version beziehungsweise Commit und dem
    Diagnosebericht dokumentieren.
-4. Die Hardwareabnahme kann unabhängig von der Entwicklung fortgeführt werden.
-   Als nächster Schritt folgt die **Ende-zu-Ende-Abnahme von Arbeitspaket 6**:
-   Quelle committen und pushen, ein höher versioniertes frameworkabhängiges
-   `win-x64`-Bundle samt SHA-256-Datei veröffentlichen und das Update aus einem
-   älteren Testbuild durchführen.
-5. Danach beginnt Arbeitspaket **7 – Release-Vorbereitung**.
+4. Arbeitspaket **6 – Updatefunktion** ist abgeschlossen.
+5. In Arbeitspaket **7 – Release-Vorbereitung** verbleiben die Abnahme des
+   entpackten Bundles auf dem zweiten Rechner und der erneute Autostart-Test mit
+   dem tatsächlich ausgelieferten EXE-Pfad.
