@@ -162,6 +162,9 @@ geprüften Paket und startet die neue Version. Scheitert Austausch oder
 Neustart, werden bereits vorgenommene Änderungen zurückgerollt und der
 Rollback-Status sichtbar gemeldet. Profile unter `%LocalAppData%` und der
 stabile EXE-Pfad des Autostarts werden dabei nicht verschoben oder ersetzt.
+Kurzlebige Windows-Dateisperren unmittelbar nach dem Prozessende werden für
+maximal zehn Sekunden kontrolliert erneut versucht; dauerhafte Fehler nennen
+die betroffene Datei und Aktion.
 
 Updates bleiben vollständig manuell: Es gibt weder eine Prüfung beim Start
 noch einen unbeaufsichtigten Download oder eine unbeaufsichtigte Installation.

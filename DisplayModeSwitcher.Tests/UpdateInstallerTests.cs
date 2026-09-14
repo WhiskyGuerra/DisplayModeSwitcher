@@ -135,6 +135,32 @@ internal static class UpdateInstallerTests
         });
     }
 
+    internal static void TransientExecutableLockIsRetried()
+    {
+        WithTemporaryDirectory(root =>
+        {
+            var install = CreateInstallation(root);
+            var payload = Path.Combine(root, "payload");
+            var backup = Path.Combine(root, "backup");
+            Directory.CreateDirectory(payload);
+            File.WriteAllText(Path.Combine(payload, RequiredFiles[0]), "new-exe");
+            var executable = Path.Combine(install, RequiredFiles[0]);
+            var temporaryLock = new FileStream(executable, FileMode.Open, FileAccess.Read, FileShare.None);
+            var releaseLock = Task.Run(() =>
+            {
+                Thread.Sleep(600);
+                temporaryLock.Dispose();
+            });
+
+            var result = TransactionalUpdateInstaller.Apply(Request(install, payload, backup), _ => true);
+            releaseLock.GetAwaiter().GetResult();
+
+            True(result.Success, result.Error);
+            Equal("new-exe", File.ReadAllText(executable));
+            Equal("old-DisplayModeSwitcher.exe", File.ReadAllText(Path.Combine(backup, RequiredFiles[0])));
+        });
+    }
+
     internal static void FailedRestartRollsBackEveryChangedFile()
     {
         WithTemporaryDirectory(root =>

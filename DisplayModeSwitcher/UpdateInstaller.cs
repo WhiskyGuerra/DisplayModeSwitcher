@@ -160,6 +160,9 @@ public static class UpdateArchivePreparer
 /// <summary>Überschreibt ausschließlich Dateien aus dem geprüften Payload und rollt Teiländerungen zurück.</summary>
 internal static class TransactionalUpdateInstaller
 {
+    internal const int FileOperationAttempts = 40;
+    internal const int FileOperationDelayMilliseconds = 250;
+
     internal static UpdateInstallResult Apply(UpdateInstallRequest request, Func<string, bool> startApplication)
     {
         try
@@ -185,10 +188,12 @@ internal static class TransactionalUpdateInstaller
                     if (backup is not null)
                     {
                         Directory.CreateDirectory(Path.GetDirectoryName(backup)!);
-                        File.Copy(target, backup, overwrite: false);
+                        RetryFileOperation(
+                            () => File.Copy(target, backup, overwrite: false),
+                            "Backup", target);
                     }
                     Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-                    ReplaceFile(source, target);
+                    RetryFileOperation(() => ReplaceFile(source, target), "Austausch", target);
                     applied.Add((target, backup));
                 }
 
@@ -251,8 +256,31 @@ internal static class TransactionalUpdateInstaller
         }
         finally
         {
-            if (File.Exists(temporary)) File.Delete(temporary);
+            try { if (File.Exists(temporary)) File.Delete(temporary); }
+            catch { }
         }
+    }
+
+    private static void RetryFileOperation(Action operation, string actionName, string target)
+    {
+        Exception? lastError = null;
+        for (var attempt = 1; attempt <= FileOperationAttempts; attempt++)
+        {
+            try
+            {
+                operation();
+                return;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                lastError = ex;
+                if (attempt < FileOperationAttempts) Thread.Sleep(FileOperationDelayMilliseconds);
+            }
+        }
+
+        throw new IOException(
+            $"{actionName} für '{Path.GetFileName(target)}' war nach {FileOperationAttempts * FileOperationDelayMilliseconds / 1000} Sekunden nicht möglich: {lastError?.Message}",
+            lastError);
     }
 
     private static List<string> Rollback(IEnumerable<(string Target, string? Backup)> applied)
@@ -263,7 +291,7 @@ internal static class TransactionalUpdateInstaller
             try
             {
                 if (item.Backup is null) File.Delete(item.Target);
-                else ReplaceFile(item.Backup, item.Target);
+                else RetryFileOperation(() => ReplaceFile(item.Backup, item.Target), "Rollback", item.Target);
             }
             catch (Exception ex) { errors.Add($"{Path.GetFileName(item.Target)}: {ex.Message}"); }
         }

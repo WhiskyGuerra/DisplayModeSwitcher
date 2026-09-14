@@ -19,6 +19,7 @@ var tests = new (string Name, Action Run)[]
     ("Update-Staging innerhalb der Installation wird abgelehnt", UpdateInstallerTests.StagingInsideInstallationIsRejected),
     ("Paketversion und Release-Version müssen übereinstimmen", UpdateInstallerTests.PackageVersionMustMatchReleaseVersion),
     ("Transaktionaler Updater ersetzt Payload und behält das Backup", UpdateInstallerTests.TransactionReplacesPayloadAndKeepsBackup),
+    ("Kurzlebige EXE-Sperren werden begrenzt erneut versucht", UpdateInstallerTests.TransientExecutableLockIsRetried),
     ("Fehlgeschlagener Neustart rollt alle Updatedateien zurück", UpdateInstallerTests.FailedRestartRollsBackEveryChangedFile),
     ("Überlappende Updatepfade werden ohne Änderung abgelehnt", UpdateInstallerTests.OverlappingUpdateDirectoriesAreRejected),
     ("Fehlgeschlagener Profilversuch wird rate-limited wiederholt", FailedAttemptRetries),

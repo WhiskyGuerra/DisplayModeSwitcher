@@ -23,7 +23,7 @@ Die funktionale Basis ist abgeschlossen:
 - Autostart, Diagnosebericht, Profilspeicherung und V1-zu-V2-Migration sind
   vorhanden.
 
-Letzter automatischer Stand: Release-Build erfolgreich, **160/160 Tests**.
+Letzter automatischer Stand: Release-Build erfolgreich, **161/161 Tests**.
 
 Manuell bestätigt:
 
@@ -235,8 +235,9 @@ Nicht als direktes `git pull`, sondern als kontrollierter Binär-Updatepfad:
 
 ### 7. Release-Vorbereitung
 
-- Versionierung für das erste installierbare Release festlegen. `v1.0.2` ist
-  für die Ende-zu-Ende-Abnahme des Self-Updaters vorgesehen.
+- Versionierung für das erste installierbare Release festlegen. `v1.0.2`
+  deckte beim Ende-zu-Ende-Test eine kurzlebige Windows-Sperre der beendeten
+  EXE auf; `v1.0.3` ergänzt begrenzte Wiederholungen und präzise Dateifehler.
 - Frameworkabhängiges `win-x64`-Bundle erzeugen; .NET 8 darf vorausgesetzt
   werden.
 - App-, Datei- und Assembly-Version konsistent setzen.
